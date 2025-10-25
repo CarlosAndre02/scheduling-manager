@@ -1,0 +1,30 @@
+{
+  "name": "scheduling-manager",
+  "version": "1.0.0",
+  "description": "A TypeScript scheduling manager application",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "nodemon src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "scheduling",
+    "typescript",
+    "node"
+  ],
+  "author": "Carlos André",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/express": "^5.0.4",
+    "@types/node": "^20.0.0",
+    "nodemon": "^3.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0"
+  }
+}
