@@ -10,7 +10,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "prettier:check": "prettier --check .",
     "prettier:fix": "prettier --write .",
-    "lint:check": "eslint ."
+    "lint:check": "eslint .",
+    "prepare": "husky",
+    "commit": "cz"
   },
   "keywords": [
     "scheduling",
@@ -20,12 +22,17 @@
   "author": "Carlos André",
   "license": "MIT",
   "devDependencies": {
+    "@commitlint/cli": "^20.1.0",
+    "@commitlint/config-conventional": "^20.0.0",
     "@eslint/js": "^9.38.0",
     "@types/express": "^5.0.4",
     "@types/node": "^20.0.0",
+    "commitizen": "^4.3.1",
+    "cz-conventional-changelog": "^3.3.0",
     "eslint": "^9.38.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^16.4.0",
+    "husky": "^9.1.7",
     "nodemon": "^3.0.0",
     "prettier": "^3.6.2",
     "ts-node": "^10.9.0",
@@ -35,5 +42,10 @@
   "dependencies": {
     "dotenv": "^17.2.3",
     "express": "^5.1.0"
+  },
+  "config": {
+    "commitizen": {
+      "path": "cz-conventional-changelog"
+    }
   }
 }
