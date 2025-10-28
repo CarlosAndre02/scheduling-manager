@@ -2,33 +2,43 @@
   "name": "scheduling-manager",
   "version": "1.0.0",
   "description": "A TypeScript scheduling manager application",
+  "author": "Carlos André",
+  "license": "MIT",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "nodemon src/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
+    "services:up": "docker compose -f infra/docker-compose.yaml up -d",
+    "services:stop": "docker compose -f infra/docker-compose.yaml stop",
+    "services:down": "docker compose -f infra/docker-compose.yaml down",
+    "drizzle:generate": "drizzle-kit generate",
+    "drizzle:migrate": "drizzle-kit migrate",
+    "drizzle:studio": "drizzle-kit studio",
+    "drizzle:drop": "drizzle-kit drop",
     "prettier:check": "prettier --check .",
     "prettier:fix": "prettier --write .",
     "lint:check": "eslint .",
     "prepare": "husky",
     "commit": "cz"
   },
-  "keywords": [
-    "scheduling",
-    "typescript",
-    "node"
-  ],
-  "author": "Carlos André",
-  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.44.7",
+    "express": "^5.1.0",
+    "pg": "^8.16.3"
+  },
   "devDependencies": {
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
     "@eslint/js": "^9.38.0",
     "@types/express": "^5.0.4",
     "@types/node": "^20.0.0",
+    "@types/pg": "^8.15.6",
     "commitizen": "^4.3.1",
     "cz-conventional-changelog": "^3.3.0",
+    "drizzle-kit": "^0.31.5",
     "eslint": "^9.38.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^16.4.0",
@@ -36,12 +46,9 @@
     "nodemon": "^3.0.0",
     "prettier": "^3.6.2",
     "ts-node": "^10.9.0",
+    "tsx": "^4.20.6",
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.46.2"
-  },
-  "dependencies": {
-    "dotenv": "^17.2.3",
-    "express": "^5.1.0"
   },
   "config": {
     "commitizen": {
