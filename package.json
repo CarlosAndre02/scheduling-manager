@@ -8,9 +8,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "nodemon src/index.ts",
+    "dev": "npm run services:down && npm run services:up && npm run drizzle:migrate && nodemon src/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "services:up": "docker compose -f infra/docker-compose.yaml up -d",
+    "services:up": "docker compose -f infra/docker-compose.yaml up -d --wait",
     "services:stop": "docker compose -f infra/docker-compose.yaml stop",
     "services:down": "docker compose -f infra/docker-compose.yaml down",
     "drizzle:generate": "drizzle-kit generate",
@@ -24,16 +24,20 @@
     "commit": "cz"
   },
   "dependencies": {
+    "dompurify": "^3.3.0",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.44.7",
     "express": "^5.1.0",
-    "pg": "^8.16.3"
+    "jsdom": "^27.1.0",
+    "pg": "^8.16.3",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
     "@eslint/js": "^9.38.0",
     "@types/express": "^5.0.4",
+    "@types/jsdom": "^27.0.0",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.15.6",
     "commitizen": "^4.3.1",
