@@ -35,14 +35,18 @@ export class User {
       { argument: user.email, argumentName: "email" },
     ]);
 
-    if (user.name.length < 3 || user.name.length > 50)
+    if (!User.isValidName(user.name))
       throw new BadRequestError("Name should be between 3 and 50 characters");
 
-    if (!this.isValidEmail(user.email))
+    if (!User.isValidEmail(user.email))
       throw new BadRequestError("Email is not valid");
   }
 
-  private isValidEmail(email: string) {
+  public static isValidName(name: string) {
+    return name.length >= 3 && name.length <= 50;
+  }
+
+  public static isValidEmail(email: string) {
     const re =
       // eslint-disable-next-line
       /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;

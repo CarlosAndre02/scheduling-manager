@@ -6,6 +6,13 @@ import { IUserRepo } from "../IUserRepo";
 import { NotFoundError } from "../../../../shared/core/errors";
 import { UserMap } from "../../mappers/UserMap";
 
+export type UpdateUserParams = {
+  id: string;
+  name?: string;
+  email?: string;
+  updated_at?: Date;
+};
+
 export class UserRepo implements IUserRepo {
   async exists(userEmail: string): Promise<boolean> {
     const userResponse = await db
@@ -44,5 +51,21 @@ export class UserRepo implements IUserRepo {
     }
 
     return { success: true };
+  }
+
+  async update(user: UpdateUserParams): Promise<User> {
+    const result = await db
+      .update(users)
+      .set({
+        name: user.name,
+        email: user.email,
+        updated_at: user.updated_at ?? new Date(),
+      })
+      .where(eq(users.id, user.id))
+      .returning();
+
+    if (!result[0]) throw new NotFoundError("User not found.");
+
+    return UserMap.toDomain(result[0]);
   }
 }
