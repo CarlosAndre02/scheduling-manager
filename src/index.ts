@@ -1,6 +1,8 @@
 import "dotenv/config";
 import express, { NextFunction, Request, Response } from "express";
+
 import { userRouter } from "./modules/user/routes";
+import { meetingRouter } from "./modules/meeting/routes";
 import { DefaultError } from "./shared/core/errors";
 
 const app = express();
@@ -18,6 +20,7 @@ app.get("/health", (_req: Request, res: Response) => {
 });
 
 app.use(userRouter);
+app.use(meetingRouter);
 
 // 404 handler
 app.use((_req: Request, res: Response) => {
