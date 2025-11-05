@@ -1,7 +1,10 @@
+import { eq } from "drizzle-orm";
 import { db } from "../../../../shared/database/conn";
 import { meetings } from "../../../../shared/database/schema";
 import { Meeting } from "../../domain/Meeting";
 import { IMeetingRepo } from "../IMeetingRepo";
+import { NotFoundError } from "../../../../shared/core/errors";
+import { MeetingMap } from "../../mappers/MeetingMap";
 
 export class MeetingRepo implements IMeetingRepo {
   async create(meeting: Meeting): Promise<{ success: boolean }> {
@@ -25,5 +28,16 @@ export class MeetingRepo implements IMeetingRepo {
     }
 
     return { success: true };
+  }
+
+  async getMeetingByMeetingId(meetingId: string): Promise<Meeting> {
+    const meetingResponse = await db
+      .select()
+      .from(meetings)
+      .where(eq(meetings.id, meetingId))
+      .limit(1);
+    if (!meetingResponse[0]) throw new NotFoundError("Meeting not found.");
+
+    return MeetingMap.toDomain(meetingResponse[0]);
   }
 }
