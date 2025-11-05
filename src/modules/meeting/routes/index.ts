@@ -4,6 +4,8 @@ import { CreateMeetingController } from "../useCases/createMeeting/CreateMeeting
 import { CreateMeetingUseCase } from "../useCases/createMeeting/CreateMeetingUseCase";
 import { GetMeetingByIdController } from "../useCases/getMeetingById/GetMeetingByIdController";
 import { GetMeetingByIdUseCase } from "../useCases/getMeetingById/GetMeetingByIdUseCase";
+import { GetMeetingsByUserIdController } from "../useCases/getMeetingsByUserId/GetMeetingsByUserIdController";
+import { GetMeetingsByUserIdUseCase } from "../useCases/getMeetingsByUserId/GetMeetingsByUserIdUseCase";
 import { MeetingRepo } from "../repositories/drizzle/MeetingRepo";
 import { UserRepo } from "../../user/repositories/drizzle/UserRepo";
 
@@ -24,8 +26,19 @@ const getMeetingByIdController = new GetMeetingByIdController(
   getMeetingByIdUseCase,
 );
 
+const getMeetingsByUserIdUseCase = new GetMeetingsByUserIdUseCase(
+  meetingRepository,
+  userRepository,
+);
+const getMeetingsByUserIdController = new GetMeetingsByUserIdController(
+  getMeetingsByUserIdUseCase,
+);
+
 meetingRouter.post("/meetings", (req, res) =>
   createMeetingController.execute(req, res),
+);
+meetingRouter.get("/meetings/user/:userId", (req, res) =>
+  getMeetingsByUserIdController.execute(req, res),
 );
 meetingRouter.get("/meetings/:id", (req, res) =>
   getMeetingByIdController.execute(req, res),

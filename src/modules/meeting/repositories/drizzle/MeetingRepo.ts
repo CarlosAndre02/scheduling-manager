@@ -40,4 +40,13 @@ export class MeetingRepo implements IMeetingRepo {
 
     return MeetingMap.toDomain(meetingResponse[0]);
   }
+
+  async getMeetingsByUserId(userId: string): Promise<Meeting[]> {
+    const meetingsResponse = await db
+      .select()
+      .from(meetings)
+      .where(eq(meetings.userId, userId));
+
+    return meetingsResponse.map((meeting) => MeetingMap.toDomain(meeting));
+  }
 }
