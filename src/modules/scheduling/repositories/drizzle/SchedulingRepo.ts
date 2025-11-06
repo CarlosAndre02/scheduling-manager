@@ -40,4 +40,15 @@ export class SchedulingRepo implements ISchedulingRepo {
 
     return SchedulingMap.toDomain(schedulingResponse[0]);
   }
+
+  async getSchedulingsByHostId(hostId: string): Promise<Scheduling[]> {
+    const schedulingsResponse = await db
+      .select()
+      .from(schedulingTable)
+      .where(eq(schedulingTable.hostId, hostId));
+
+    return schedulingsResponse.map((scheduling) =>
+      SchedulingMap.toDomain(scheduling),
+    );
+  }
 }
