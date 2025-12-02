@@ -16,10 +16,13 @@ const config = {
         tsconfig: {
           esModuleInterop: true,
           allowSyntheticDefaultImports: true,
+          module: "commonjs",
         },
       },
     ],
+    "^.+\\.js$": "babel-jest",
   },
+  transformIgnorePatterns: ["node_modules/(?!@faker-js)"],
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   coverageProvider: "v8",
   collectCoverageFrom: [

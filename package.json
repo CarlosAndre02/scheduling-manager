@@ -34,9 +34,12 @@
     "validator": "^13.15.20"
   },
   "devDependencies": {
+    "@babel/core": "^7.28.5",
+    "@babel/preset-env": "^7.28.5",
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
     "@eslint/js": "^9.38.0",
+    "@faker-js/faker": "^10.1.0",
     "@types/express": "^5.0.4",
     "@types/jest": "^30.0.0",
     "@types/jsdom": "^27.0.0",
@@ -44,6 +47,7 @@
     "@types/pg": "^8.15.6",
     "@types/supertest": "^6.0.3",
     "@types/validator": "^13.15.4",
+    "babel-jest": "^30.2.0",
     "commitizen": "^4.3.1",
     "concurrently": "^9.2.1",
     "cz-conventional-changelog": "^3.3.0",
