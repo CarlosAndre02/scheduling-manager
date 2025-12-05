@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { users } from "../src/shared/database/schema";
+import { meetings, users } from "../src/shared/database/schema";
 import { db } from "../src/shared/database/conn";
 
 export const createUser = () => {
@@ -25,14 +25,22 @@ export const createMeeting = (userIdInput?: string) => {
     id: randomUUID(),
     name: "Sprint Planning",
     description: "Plan next sprint",
-    start_datetime: "2025-11-04T10:00:00.000Z",
-    end_datetime: "2025-11-04T10:30:00.000Z",
+    start_datetime: new Date("2025-11-04T10:00:00.000Z"),
+    end_datetime: new Date("2025-11-04T10:30:00.000Z"),
     meetingDurationInMinutes: 30,
     conferenceLink: "https://meet.example.com/room-123",
+    isActive: true,
     userId: userIdInput ?? randomUUID(),
     created_at: now,
     updated_at: null,
   };
+};
+
+export const storeMeeting = async (meeting: any) => {
+  const meetingResponse = await db.insert(meetings).values(meeting).returning();
+  console.log("meetingResponse: ", meetingResponse);
+  if (!meetingResponse[0]) throw new Error("Failed to create meeting");
+  return meetingResponse[0];
 };
 
 export const createScheduling = (
