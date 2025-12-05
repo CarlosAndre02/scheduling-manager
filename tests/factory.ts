@@ -1,27 +1,34 @@
-import { faker } from "@faker-js/faker";
 import { randomUUID } from "node:crypto";
+import { users } from "../src/shared/database/schema";
+import { db } from "../src/shared/database/conn";
 
 export const createUser = () => {
   const now = new Date();
   return {
     id: randomUUID(),
-    name: faker.person.fullName(),
-    email: faker.internet.email(),
+    name: "Carlos André",
+    email: "carlosandre2@email.com",
     created_at: now,
     updated_at: null,
   };
+};
+
+export const storeUser = async (user: any) => {
+  const userResponse = await db.insert(users).values(user).returning();
+  if (!userResponse[0]) throw new Error("Failed to create user");
+  return userResponse[0];
 };
 
 export const createMeeting = (userIdInput?: string) => {
   const now = new Date();
   return {
     id: randomUUID(),
-    name: faker.lorem.sentence(),
-    description: faker.lorem.paragraph(),
-    start_datetime: faker.date.soon().toISOString(),
-    end_datetime: faker.date.soon({ days: 1 }).toISOString(),
-    meetingDurationInMinutes: 60,
-    conferenceLink: faker.internet.url(),
+    name: "Sprint Planning",
+    description: "Plan next sprint",
+    start_datetime: "2025-11-04T10:00:00.000Z",
+    end_datetime: "2025-11-04T10:30:00.000Z",
+    meetingDurationInMinutes: 30,
+    conferenceLink: "https://meet.example.com/room-123",
     userId: userIdInput ?? randomUUID(),
     created_at: now,
     updated_at: null,
@@ -36,9 +43,9 @@ export const createScheduling = (
   const now = new Date();
   return {
     id: randomUUID(),
-    schedulingDatetime: faker.date.soon().toISOString(),
-    name: faker.lorem.sentence(),
-    purpose: faker.lorem.paragraph(),
+    schedulingDatetime: "2025-11-04T10:15:00.000Z",
+    name: "Intro Call",
+    purpose: "Discuss project scope",
     hostId: hostIdInput ?? randomUUID(),
     guestId: guestIdInput ?? randomUUID(),
     meetingId: meetingIdInput ?? randomUUID(),

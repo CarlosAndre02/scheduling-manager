@@ -14,7 +14,7 @@ describe("GET /users/:id", () => {
     await clearDatabase();
   });
 
-  it("Should return 200 and the persisted user when it exists", async () => {
+  it("Should return 200 when user exists", async () => {
     const seededUser = createUser();
 
     await request(BASE_URL)

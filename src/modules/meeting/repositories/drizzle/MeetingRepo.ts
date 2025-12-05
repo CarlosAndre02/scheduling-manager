@@ -36,7 +36,7 @@ export class MeetingRepo implements IMeetingRepo {
       .from(meetings)
       .where(eq(meetings.id, meetingId))
       .limit(1);
-    if (!meetingResponse[0]) throw new NotFoundError("Meeting not found.");
+    if (!meetingResponse[0]) throw new NotFoundError("Meeting not found");
 
     return MeetingMap.toDomain(meetingResponse[0]);
   }
