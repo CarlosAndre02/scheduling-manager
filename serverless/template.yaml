@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Scheduler Manager API
+
+Parameters:
+  StageName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Deployment stage name.
+
+Resources:
+  SchedulerManagerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: dist/handlers/handler.handler
+      Runtime: nodejs20.x
+      CodeUri: dist/handlers/
+      Timeout: 5
+      MemorySize: 256
+      Tracing: Active
+      Policies:
+        - AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          STAGE: !Ref StageName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /scheduler
+            Method: get
+            RestApiId: !Ref SchedulerManagerApiGateway
+
+  SchedulerManagerApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref StageName
+      EndpointConfiguration: REGIONAL
+      TracingEnabled: true
+      Cors:
+        AllowMethods: "'*'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+
+Outputs:
+  ApiEndpoint:
+    Value: !Sub https://${SchedulerManagerApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/scheduler
+    Description: API Gateway endpoint URL for the Scheduler Manager
