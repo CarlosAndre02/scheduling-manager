@@ -7,6 +7,13 @@ yarn-error.log*
 # Build outputs
 dist/
 build/
+*.tsbuildinfo
+
+# Serverless (AWS SAM)
+.aws-sam/
+
+# Test coverage
+coverage/
 
 # Environment variables
 .env
