@@ -1,55 +1,59 @@
 import "dotenv/config";
-import express, { NextFunction, Request, Response } from "express";
 
-import { userRouter } from "./modules/user/routes";
-import { meetingRouter } from "./modules/meeting/routes";
-import { schedulingRouter } from "./modules/scheduling/routes";
-import { DefaultError } from "./shared/core/errors";
+import app from "./app";
+import { markShuttingDown } from "./shared/core/lifecycle";
+import { pool } from "./shared/database/conn";
 
-const app = express();
-const PORT = process.env.SERVER_PORT || 4000;
+const PORT = Number(process.env.SERVER_PORT ?? 4000);
+const DRAIN_DELAY_MS = Number(process.env.SHUTDOWN_DRAIN_DELAY_MS ?? 5000);
+const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 15000);
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-app.get("/", (_req: Request, res: Response) => {
-  res.json({ message: "Hello World!" });
-});
-
-app.get("/health", (_req: Request, res: Response) => {
-  res.status(200).json({ status: "OK", timestamp: new Date().toISOString() });
-});
-
-app.use(userRouter);
-app.use(meetingRouter);
-app.use(schedulingRouter);
-
-// 404 handler
-app.use((_req: Request, res: Response) => {
-  res.status(404).json({ error: "Route not found" });
-});
-
-// Error handling middleware
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  if (err instanceof DefaultError) {
-    console.log(`\n[${err.name}]: An Application error occurred`);
-    console.error(err.message);
-    return res.status(err.code).json({
-      message: err.message,
-    });
-  }
-
-  console.log("\nInternal server error");
-  console.error(err);
-  return res.status(500).json({
-    status: "error",
-    message: `Internal server error - ${err.message}`,
-  });
-});
-
-app.listen(PORT as number, () => {
+const server = app.listen(PORT, () => {
   console.log(`\nServer is running on port ${PORT}`);
   console.log(`Hello World endpoint: http://localhost:${PORT}/`);
 });
 
-export default app;
+// Both must stay above the load balancer idle timeout (60s on an AWS ALB).
+// Otherwise the balancer may reuse a connection Node is closing and the client
+// sees a sporadic 502.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
+
+const wait = (ms: number) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+let shutdownStarted = false;
+
+async function shutdown(signal: string) {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+
+  console.log(`\n[${signal}] Draining - /health now reports unhealthy`);
+  markShuttingDown();
+  await wait(DRAIN_DELAY_MS);
+
+  const forceExit = setTimeout(() => {
+    console.error(
+      `Shutdown exceeded ${SHUTDOWN_TIMEOUT_MS}ms, closing open connections`,
+    );
+    server.closeAllConnections();
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceExit.unref();
+
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => (err ? reject(err) : resolve()));
+    server.closeIdleConnections();
+  });
+
+  clearTimeout(forceExit);
+  await pool.end();
+
+  console.log("Shutdown complete");
+  process.exit(0);
+}
+
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));
