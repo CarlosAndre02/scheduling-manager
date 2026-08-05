@@ -26,6 +26,9 @@
     "prepare": "husky",
     "commit": "cz"
   },
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs,cjs,json,md,yaml,yml}": "prettier --write"
+  },
   "dependencies": {
     "dompurify": "^3.3.0",
     "dotenv": "^17.2.3",
@@ -60,6 +63,7 @@
     "globals": "^16.4.0",
     "husky": "^9.1.7",
     "jest": "^30.2.0",
+    "lint-staged": "^17.3.0",
     "nodemon": "^3.0.0",
     "prettier": "^3.6.2",
     "supertest": "^7.1.4",
