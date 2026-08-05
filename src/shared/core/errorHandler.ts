@@ -7,8 +7,27 @@ export function notFoundHandler(_req: Request, res: Response): Response {
   return res.status(404).json({ message: "Route not found" });
 }
 
-function isBodyParserSyntaxError(err: Error): boolean {
-  return err instanceof SyntaxError && "body" in err;
+// body-parser rejects a request before it ever reaches a controller, tagging
+// the error with an HTTP status and a machine-readable type. Without this the
+// client's own mistake would be reported as an internal failure.
+const BODY_PARSER_MESSAGES: Record<string, string> = {
+  "entity.parse.failed": "Malformed JSON body",
+  "entity.too.large": "Request body is too large",
+  "encoding.unsupported": "Unsupported content encoding",
+};
+
+type RequestError = Error & {
+  status?: number;
+  statusCode?: number;
+  type?: string;
+};
+
+function clientErrorStatus(err: RequestError): number | undefined {
+  const status = err.status ?? err.statusCode;
+  if (typeof status !== "number" || status < 400 || status >= 500) {
+    return undefined;
+  }
+  return status;
 }
 
 export function errorHandler(
@@ -25,8 +44,11 @@ export function errorHandler(
     return res.status(err.code).json({ message: err.message });
   }
 
-  if (isBodyParserSyntaxError(err)) {
-    return res.status(400).json({ message: "Malformed JSON body" });
+  const status = clientErrorStatus(err as RequestError);
+  if (status !== undefined) {
+    const type = (err as RequestError).type;
+    const message = (type && BODY_PARSER_MESSAGES[type]) || "Invalid request";
+    return res.status(status).json({ message });
   }
 
   // Nothing below here is safe to expose: driver and query errors carry table

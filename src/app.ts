@@ -8,8 +8,12 @@ import { isShuttingDown } from "./shared/core/lifecycle";
 
 const app = express();
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// The largest legitimate body is a meeting, whose longest field caps at 100
+// characters. The 100kb default is orders of magnitude more than that.
+const BODY_LIMIT = "10kb";
+
+app.use(express.json({ limit: BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
 
 app.get("/", (_req: Request, res: Response) => {
   res.json({ message: "Hello World!" });
