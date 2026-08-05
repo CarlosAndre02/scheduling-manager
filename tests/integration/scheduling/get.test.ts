@@ -23,11 +23,10 @@ describe("GET /schedulings/:id", () => {
     const firstSeededUser = createUser();
     const firstUser = await storeUser(firstSeededUser);
 
-    const secondSeededUser = {
-      id: "1234",
+    const secondSeededUser = createUser({
       name: "Neymar Jr",
       email: "neymarjr@email.com",
-    };
+    });
     const secondUser = await storeUser(secondSeededUser);
 
     const seededMeeting = createMeeting(firstUser.id);

@@ -3,6 +3,10 @@ import { Request, Response } from "express";
 import { BaseController } from "../../../../shared/core/BaseController";
 import { EditUserUseCase } from "./EditUserUseCase";
 import { EditUserDTO } from "./EditUserDTO";
+import {
+  optionalString,
+  requireUuid,
+} from "../../../../shared/core/RequestInput";
 import { TextUtils } from "../../../../shared/utils/TextUtils";
 
 export class EditUserController implements BaseController {
@@ -13,20 +17,16 @@ export class EditUserController implements BaseController {
   }
 
   async execute(req: Request, res: Response): Promise<Response> {
-    const userId = req.params.id;
-    const editUserDTO = req.body as EditUserDTO;
+    const body = req.body ?? {};
+    const email = optionalString(body.email, "email");
 
-    const sanitizedUserDTO: EditUserDTO = {
-      userId: userId,
-      name: editUserDTO.name
-        ? TextUtils.sanitize(editUserDTO.name).trim()
-        : undefined,
-      email: editUserDTO.email
-        ? TextUtils.sanitize(editUserDTO.email).trim()
-        : undefined,
+    const editUserDTO: EditUserDTO = {
+      userId: requireUuid(req.params.id, "id"),
+      name: optionalString(body.name, "name"),
+      email: email ? TextUtils.normalizeEmail(email) : undefined,
     };
 
-    const user = await this.useCase.execute(sanitizedUserDTO);
+    const user = await this.useCase.execute(editUserDTO);
 
     return res.status(200).json({ data: user });
   }

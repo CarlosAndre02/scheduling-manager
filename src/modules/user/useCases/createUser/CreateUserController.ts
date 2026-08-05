@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import { CreateUserUseCase } from "./CreateUserUseCase";
 import { BaseController } from "../../../../shared/core/BaseController";
 import { CreateUserDTO } from "./CreateUserDTO";
+import { requireString } from "../../../../shared/core/RequestInput";
 import { TextUtils } from "../../../../shared/utils/TextUtils";
 
 export class CreateUserController implements BaseController {
@@ -13,14 +14,14 @@ export class CreateUserController implements BaseController {
   }
 
   async execute(req: Request, res: Response): Promise<Response> {
-    const userDTO = req.body as CreateUserDTO;
+    const body = req.body ?? {};
 
-    const sanitizedUserDTO: CreateUserDTO = {
-      name: TextUtils.sanitize(userDTO.name).trim(),
-      email: TextUtils.sanitize(userDTO.email).trim(),
+    const userDTO: CreateUserDTO = {
+      name: requireString(body.name, "name"),
+      email: TextUtils.normalizeEmail(requireString(body.email, "email")),
     };
 
-    const response = await this.useCase.execute(sanitizedUserDTO);
+    const response = await this.useCase.execute(userDTO);
 
     if (!response.success)
       return res

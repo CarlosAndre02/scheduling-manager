@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 
 import { BaseController } from "../../../../shared/core/BaseController";
+import { requireUuid } from "../../../../shared/core/RequestInput";
 import { GetUserByIdUseCase } from "./GetUserByIdUseCase";
 
 export class GetUserByIdController implements BaseController {
@@ -11,7 +12,7 @@ export class GetUserByIdController implements BaseController {
   }
 
   async execute(req: Request, res: Response): Promise<Response> {
-    const userId = req.params.id;
+    const userId = requireUuid(req.params.id, "id");
 
     const user = await this.useCase.execute({ userId });
 

@@ -1,6 +1,7 @@
 import { v4 as uuidV4 } from "uuid";
 import { Guard } from "../../../shared/core/Guard";
 import { BadRequestError } from "../../../shared/core/errors";
+import { TextUtils } from "../../../shared/utils/TextUtils";
 
 export type SchedulingProps = {
   id?: string;
@@ -65,6 +66,12 @@ export class Scheduling {
       throw new BadRequestError(
         "Purpose should be between 3 and 100 characters",
       );
+
+    if (TextUtils.containsHtmlTag(scheduling.name))
+      throw new BadRequestError("Name must not contain HTML");
+
+    if (TextUtils.containsHtmlTag(scheduling.purpose))
+      throw new BadRequestError("Purpose must not contain HTML");
 
     if (!Scheduling.isValidDate(scheduling.schedulingDatetime))
       throw new BadRequestError("schedulingDatetime must be a valid datetime");

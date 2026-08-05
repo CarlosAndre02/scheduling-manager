@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 
 import { BaseController } from "../../../../shared/core/BaseController";
+import { requireUuid } from "../../../../shared/core/RequestInput";
 import { GetSchedulingByIdUseCase } from "./GetSchedulingByIdUseCase";
 
 export class GetSchedulingByIdController implements BaseController {
@@ -11,7 +12,7 @@ export class GetSchedulingByIdController implements BaseController {
   }
 
   async execute(req: Request, res: Response): Promise<Response> {
-    const schedulingId = req.params.id;
+    const schedulingId = requireUuid(req.params.id, "id");
 
     const scheduling = await this.useCase.execute({ schedulingId });
 

@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 
 import { BaseController } from "../../../../shared/core/BaseController";
+import { requireUuid } from "../../../../shared/core/RequestInput";
 import { parsePagination } from "../../../../shared/core/Pagination";
 import { GetMeetingsByUserIdUseCase } from "./GetMeetingsByUserIdUseCase";
 
@@ -12,7 +13,7 @@ export class GetMeetingsByUserIdController implements BaseController {
   }
 
   async execute(req: Request, res: Response): Promise<Response> {
-    const userId = req.params.userId;
+    const userId = requireUuid(req.params.userId, "userId");
     const pagination = parsePagination(req.query);
 
     const meetings = await this.useCase.execute({ userId, pagination });

@@ -1,4 +1,5 @@
 import request from "supertest";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 
 import { createMeeting, createUser, storeUser } from "../../factory";
@@ -54,10 +55,19 @@ describe("GET /meetings/:id", () => {
 
   it("Should return 404 and a meaningful message when meeting does not exist", async () => {
     const response = await request(BASE_URL)
-      .get(`/meetings/123`)
+      .get(`/meetings/${randomUUID()}`)
       .expect("Content-Type", /json/)
       .expect(404);
 
     expect(response.body.message).toBe("Meeting not found");
+  });
+
+  it("Should return 400 when the id is not a uuid", async () => {
+    const response = await request(BASE_URL)
+      .get(`/meetings/123`)
+      .expect("Content-Type", /json/)
+      .expect(400);
+
+    expect(response.body.message).toBe("id must be a valid uuid");
   });
 });

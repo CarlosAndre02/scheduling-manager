@@ -3,7 +3,10 @@ import { Request, Response } from "express";
 import { CreateSchedulingUseCase } from "./CreateSchedulingUseCase";
 import { BaseController } from "../../../../shared/core/BaseController";
 import { CreateSchedulingDTO } from "./CreateSchedulingDTO";
-import { TextUtils } from "../../../../shared/utils/TextUtils";
+import {
+  requireString,
+  requireUuid,
+} from "../../../../shared/core/RequestInput";
 
 export class CreateSchedulingController implements BaseController {
   private useCase: CreateSchedulingUseCase;
@@ -13,18 +16,21 @@ export class CreateSchedulingController implements BaseController {
   }
 
   async execute(req: Request, res: Response): Promise<Response> {
-    const dto = req.body as CreateSchedulingDTO;
+    const body = req.body ?? {};
 
-    const sanitizedDTO: CreateSchedulingDTO = {
-      schedulingDatetime: dto.schedulingDatetime.trim(),
-      name: TextUtils.sanitize(dto.name).trim(),
-      purpose: TextUtils.sanitize(dto.purpose).trim(),
-      hostId: dto.hostId.trim(),
-      guestId: dto.guestId.trim(),
-      meetingId: dto.meetingId.trim(),
+    const dto: CreateSchedulingDTO = {
+      schedulingDatetime: requireString(
+        body.schedulingDatetime,
+        "schedulingDatetime",
+      ),
+      name: requireString(body.name, "name"),
+      purpose: requireString(body.purpose, "purpose"),
+      hostId: requireUuid(body.hostId, "hostId"),
+      guestId: requireUuid(body.guestId, "guestId"),
+      meetingId: requireUuid(body.meetingId, "meetingId"),
     };
 
-    const response = await this.useCase.execute(sanitizedDTO);
+    const response = await this.useCase.execute(dto);
 
     if (!response.success)
       return res

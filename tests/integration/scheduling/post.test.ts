@@ -80,4 +80,33 @@ describe("POST /schedulings", () => {
     const statuses = responses.map((response) => response.status).sort();
     expect(statuses).toEqual([201, 400]);
   });
+
+  it("Should return 400 when a required field is missing", async () => {
+    const { host, guest, meeting } = await seedHostGuestAndMeeting();
+    const scheduling = createScheduling(host.id, guest.id, meeting.id);
+    const { hostId: _omitted, ...withoutHost } = scheduling;
+
+    const response = await request(BASE_URL)
+      .post("/schedulings")
+      .send(withoutHost)
+      .expect(400);
+
+    expect(response.body.message).toBe(
+      "hostId is required and must be a string",
+    );
+  });
+
+  it("Should reject a purpose containing HTML", async () => {
+    const { host, guest, meeting } = await seedHostGuestAndMeeting();
+
+    const response = await request(BASE_URL)
+      .post("/schedulings")
+      .send({
+        ...createScheduling(host.id, guest.id, meeting.id),
+        purpose: "<script>alert(1)</script> talk",
+      })
+      .expect(400);
+
+    expect(response.body.message).toBe("Purpose must not contain HTML");
+  });
 });

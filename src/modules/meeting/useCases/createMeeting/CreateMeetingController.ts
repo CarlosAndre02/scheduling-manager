@@ -3,7 +3,11 @@ import { Request, Response } from "express";
 import { CreateMeetingUseCase } from "./CreateMeetingUseCase";
 import { BaseController } from "../../../../shared/core/BaseController";
 import { CreateMeetingDTO } from "./CreateMeetingDTO";
-import { TextUtils } from "../../../../shared/utils/TextUtils";
+import {
+  requireInteger,
+  requireString,
+  requireUuid,
+} from "../../../../shared/core/RequestInput";
 
 export class CreateMeetingController implements BaseController {
   private useCase: CreateMeetingUseCase;
@@ -13,19 +17,22 @@ export class CreateMeetingController implements BaseController {
   }
 
   async execute(req: Request, res: Response): Promise<Response> {
-    const meetingDTO = req.body as CreateMeetingDTO;
+    const body = req.body ?? {};
 
-    const sanitizedMeetingDTO: CreateMeetingDTO = {
-      name: TextUtils.sanitize(meetingDTO.name).trim(),
-      description: TextUtils.sanitize(meetingDTO.description).trim(),
-      start_datetime: meetingDTO.start_datetime.trim(),
-      end_datetime: meetingDTO.end_datetime.trim(),
-      meetingDurationInMinutes: meetingDTO.meetingDurationInMinutes,
-      conferenceLink: meetingDTO.conferenceLink.trim(),
-      userId: meetingDTO.userId,
+    const meetingDTO: CreateMeetingDTO = {
+      name: requireString(body.name, "name"),
+      description: requireString(body.description, "description"),
+      start_datetime: requireString(body.start_datetime, "start_datetime"),
+      end_datetime: requireString(body.end_datetime, "end_datetime"),
+      meetingDurationInMinutes: requireInteger(
+        body.meetingDurationInMinutes,
+        "meetingDurationInMinutes",
+      ),
+      conferenceLink: requireString(body.conferenceLink, "conferenceLink"),
+      userId: requireUuid(body.userId, "userId"),
     };
 
-    const response = await this.useCase.execute(sanitizedMeetingDTO);
+    const response = await this.useCase.execute(meetingDTO);
 
     if (!response.success)
       return res

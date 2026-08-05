@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 
 import { BaseController } from "../../../../shared/core/BaseController";
+import { requireUuid } from "../../../../shared/core/RequestInput";
 import { parsePagination } from "../../../../shared/core/Pagination";
 import { GetSchedulingsByHostIdUseCase } from "./GetSchedulingsByHostIdUseCase";
 
@@ -12,7 +13,7 @@ export class GetSchedulingsByHostIdController implements BaseController {
   }
 
   async execute(req: Request, res: Response): Promise<Response> {
-    const hostId = req.params.hostId;
+    const hostId = requireUuid(req.params.hostId, "hostId");
     const pagination = parsePagination(req.query);
 
     const schedulings = await this.useCase.execute({ hostId, pagination });

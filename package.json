@@ -30,11 +30,9 @@
     "*.{ts,tsx,js,mjs,cjs,json,md,yaml,yml}": "prettier --write"
   },
   "dependencies": {
-    "dompurify": "^3.3.0",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.44.7",
     "express": "^5.1.0",
-    "jsdom": "^27.1.0",
     "pg": "^8.16.3",
     "uuid": "^13.0.0",
     "validator": "^13.15.20"
@@ -48,7 +46,6 @@
     "@faker-js/faker": "^10.1.0",
     "@types/express": "^5.0.4",
     "@types/jest": "^30.0.0",
-    "@types/jsdom": "^27.0.0",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.15.6",
     "@types/supertest": "^6.0.3",

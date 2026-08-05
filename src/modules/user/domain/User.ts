@@ -1,6 +1,7 @@
 import { v4 as uuidV4 } from "uuid";
 import { Guard } from "../../../shared/core/Guard";
 import { BadRequestError } from "../../../shared/core/errors";
+import { TextUtils } from "../../../shared/utils/TextUtils";
 
 export type UserProps = {
   id?: string;
@@ -37,6 +38,9 @@ export class User {
 
     if (!User.isValidName(user.name))
       throw new BadRequestError("Name should be between 3 and 50 characters");
+
+    if (TextUtils.containsHtmlTag(user.name))
+      throw new BadRequestError("Name must not contain HTML");
 
     if (!User.isValidEmail(user.email))
       throw new BadRequestError("Email is not valid");

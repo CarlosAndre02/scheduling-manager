@@ -72,6 +72,12 @@ export class Meeting {
         "Description should be between 3 and 100 characters",
       );
 
+    if (TextUtils.containsHtmlTag(meeting.name))
+      throw new BadRequestError("Name must not contain HTML");
+
+    if (TextUtils.containsHtmlTag(meeting.description))
+      throw new BadRequestError("Description must not contain HTML");
+
     if (!Meeting.isValidUTCDate(meeting.start_datetime))
       throw new BadRequestError("start_datetime must be a valid UTC datetime");
     if (!Meeting.isValidUTCDate(meeting.end_datetime))
