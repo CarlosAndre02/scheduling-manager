@@ -18,7 +18,10 @@ export class GetMeetingsByUserIdUseCase
   async execute(request: GetMeetingsByUserIdDTO): Promise<Meeting[]> {
     await this.userRepo.getUserByUserId(request.userId);
 
-    const meetings = await this.meetingRepo.getMeetingsByUserId(request.userId);
+    const meetings = await this.meetingRepo.getMeetingsByUserId(
+      request.userId,
+      request.pagination,
+    );
     return meetings;
   }
 }

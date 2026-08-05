@@ -4,6 +4,7 @@ import { meetings } from "../../../../shared/database/schema";
 import { Meeting } from "../../domain/Meeting";
 import { IMeetingRepo } from "../IMeetingRepo";
 import { NotFoundError } from "../../../../shared/core/errors";
+import { Pagination } from "../../../../shared/core/Pagination";
 import { MeetingMap } from "../../mappers/MeetingMap";
 
 export class MeetingRepo implements IMeetingRepo {
@@ -41,11 +42,17 @@ export class MeetingRepo implements IMeetingRepo {
     return MeetingMap.toDomain(meetingResponse[0]);
   }
 
-  async getMeetingsByUserId(userId: string): Promise<Meeting[]> {
+  async getMeetingsByUserId(
+    userId: string,
+    pagination: Pagination,
+  ): Promise<Meeting[]> {
     const meetingsResponse = await db
       .select()
       .from(meetings)
-      .where(eq(meetings.userId, userId));
+      .where(eq(meetings.userId, userId))
+      .orderBy(meetings.start_datetime)
+      .limit(pagination.limit)
+      .offset(pagination.offset);
 
     return meetingsResponse.map((meeting) => MeetingMap.toDomain(meeting));
   }

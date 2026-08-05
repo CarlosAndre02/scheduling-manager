@@ -20,6 +20,7 @@ export class GetSchedulingsByHostIdUseCase
 
     const schedulings = await this.schedulingRepo.getSchedulingsByHostId(
       request.hostId,
+      request.pagination,
     );
     return schedulings;
   }

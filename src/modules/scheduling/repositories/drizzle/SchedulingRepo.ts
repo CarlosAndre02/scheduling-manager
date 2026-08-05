@@ -5,6 +5,7 @@ import { Scheduling } from "../../domain/Scheduling";
 import { ISchedulingRepo } from "../ISchedulingRepo";
 import { BadRequestError, NotFoundError } from "../../../../shared/core/errors";
 import { isUniqueViolation } from "../../../../shared/database/errors";
+import { Pagination } from "../../../../shared/core/Pagination";
 import { SchedulingMap } from "../../mappers/SchedulingMap";
 
 export class SchedulingRepo implements ISchedulingRepo {
@@ -54,11 +55,17 @@ export class SchedulingRepo implements ISchedulingRepo {
     return SchedulingMap.toDomain(schedulingResponse[0]);
   }
 
-  async getSchedulingsByHostId(hostId: string): Promise<Scheduling[]> {
+  async getSchedulingsByHostId(
+    hostId: string,
+    pagination: Pagination,
+  ): Promise<Scheduling[]> {
     const schedulingsResponse = await db
       .select()
       .from(schedulingTable)
-      .where(eq(schedulingTable.hostId, hostId));
+      .where(eq(schedulingTable.hostId, hostId))
+      .orderBy(schedulingTable.schedulingDatetime)
+      .limit(pagination.limit)
+      .offset(pagination.offset);
 
     return schedulingsResponse.map((scheduling) =>
       SchedulingMap.toDomain(scheduling),
