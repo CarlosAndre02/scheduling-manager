@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { meetings, users } from "../src/shared/database/schema";
 import { db } from "../src/shared/database/conn";
 
-export const createUser = () => {
+export const createUser = (overrides: Record<string, any> = {}) => {
   const now = new Date();
   return {
     id: randomUUID(),
@@ -10,6 +10,7 @@ export const createUser = () => {
     email: "carlosandre2@email.com",
     created_at: now,
     updated_at: null,
+    ...overrides,
   };
 };
 

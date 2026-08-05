@@ -3,7 +3,8 @@ import { db } from "../../../../shared/database/conn";
 import { users } from "../../../../shared/database/schema";
 import { User } from "../../domain/User";
 import { IUserRepo } from "../IUserRepo";
-import { NotFoundError } from "../../../../shared/core/errors";
+import { BadRequestError, NotFoundError } from "../../../../shared/core/errors";
+import { isUniqueViolation } from "../../../../shared/database/errors";
 import { UserMap } from "../../mappers/UserMap";
 
 export type UpdateUserParams = {
@@ -37,12 +38,24 @@ export class UserRepo implements IUserRepo {
   }
 
   async create(user: User): Promise<{ success: boolean }> {
-    const result = await db
-      .insert(users)
-      .values({
-        ...user,
-      })
-      .returning();
+    let result;
+
+    try {
+      result = await db
+        .insert(users)
+        .values({
+          ...user,
+        })
+        .returning();
+    } catch (e: unknown) {
+      // The caller checks exists() first, but that check and this insert are
+      // not atomic: concurrent signups both pass it and one hits the
+      // constraint. Only the database can settle the race.
+      if (isUniqueViolation(e, "user_email_unique")) {
+        throw new BadRequestError("User already exists with this email");
+      }
+      throw e;
+    }
 
     if (!result[0]) {
       return {

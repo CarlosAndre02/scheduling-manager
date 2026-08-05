@@ -3,24 +3,37 @@ import { db } from "../../../../shared/database/conn";
 import { scheduling as schedulingTable } from "../../../../shared/database/schema";
 import { Scheduling } from "../../domain/Scheduling";
 import { ISchedulingRepo } from "../ISchedulingRepo";
-import { NotFoundError } from "../../../../shared/core/errors";
+import { BadRequestError, NotFoundError } from "../../../../shared/core/errors";
+import { isUniqueViolation } from "../../../../shared/database/errors";
 import { SchedulingMap } from "../../mappers/SchedulingMap";
 
 export class SchedulingRepo implements ISchedulingRepo {
   async create(scheduling: Scheduling): Promise<{ success: boolean }> {
-    const result = await db
-      .insert(schedulingTable)
-      .values({
-        id: scheduling.id,
-        schedulingDatetime: scheduling.schedulingDatetime,
-        name: scheduling.name,
-        purpose: scheduling.purpose,
-        isActive: scheduling.isActive ?? true,
-        hostId: scheduling.hostId,
-        guestId: scheduling.guestId,
-        meetingId: scheduling.meetingId,
-      })
-      .returning();
+    let result;
+
+    try {
+      result = await db
+        .insert(schedulingTable)
+        .values({
+          id: scheduling.id,
+          schedulingDatetime: scheduling.schedulingDatetime,
+          name: scheduling.name,
+          purpose: scheduling.purpose,
+          isActive: scheduling.isActive ?? true,
+          hostId: scheduling.hostId,
+          guestId: scheduling.guestId,
+          meetingId: scheduling.meetingId,
+        })
+        .returning();
+    } catch (e: unknown) {
+      // Two guests booking the same slot at the same time both pass every
+      // check in the use case; the partial unique index is what actually
+      // prevents the double booking.
+      if (isUniqueViolation(e, "scheduling_active_slot_idx")) {
+        throw new BadRequestError("This time slot is already booked");
+      }
+      throw e;
+    }
 
     if (!result[0]) {
       return { success: false };
