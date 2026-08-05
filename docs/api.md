@@ -1,6 +1,6 @@
 # API — Running and Testing
 
-How to get the Scheduling Manager API running locally and how to exercise it, both by hand and through the test suite.
+How to get the Scheduling Manager API running locally and how to exercise it, both by hand and through the test suite. For how the code is organized, see [architecture.md](architecture.md).
 
 ## Requirements
 
@@ -95,14 +95,33 @@ Base URL: `http://localhost:4000`. All bodies are JSON.
 | PUT    | `/users/:id`                | update a user's name and/or email      |
 | POST   | `/meetings`                 | create a meeting (availability window) |
 | GET    | `/meetings/:id`             | get a meeting                          |
-| GET    | `/meetings/user/:userId`    | list a user's meetings                 |
+| GET    | `/meetings/user/:userId`    | list a user's meetings (paginated)     |
 | POST   | `/schedulings`              | book a slot inside a meeting           |
 | GET    | `/schedulings/:id`          | get a scheduling                       |
-| GET    | `/schedulings/host/:hostId` | list a host's schedulings              |
+| GET    | `/schedulings/host/:hostId` | list a host's schedulings (paginated)  |
 
 Write endpoints answer `{ "success": true, "message": "..." }` with `201`; read endpoints answer `{ "data": ... }` with `200`. Ids are server-generated UUIDs — they are never taken from the request body, so read them back with a GET (or from the database) after creating.
 
-**All datetimes must be ISO-8601 UTC strings ending in `Z`** (`2026-08-10T10:00:00Z` or `...:00.000Z`). Offsets like `-03:00` and date-only strings are rejected with `400`.
+**All datetimes must be ISO-8601 UTC strings ending in `Z`** (`2026-08-10T10:00:00Z` or `...:00.000Z`). Offsets like `-03:00` and date-only strings are rejected with `400`. They are stored as `timestamptz`, so what round-trips is the instant, not a wall-clock reading that depends on the server's timezone.
+
+### Pagination
+
+The two list endpoints accept `limit` and `offset`, and always cap the page whether or not the caller asks:
+
+| Parameter | Default | Rules                                         |
+| --------- | ------- | --------------------------------------------- |
+| `limit`   | `20`    | integer between 1 and 100; `400` outside that |
+| `offset`  | `0`     | non-negative integer                          |
+
+```bash
+curl "$BASE/meetings/user/$HOST_ID?limit=2&offset=2"
+```
+
+```json
+{ "data": [ ... ], "pagination": { "limit": 2, "offset": 2, "count": 1 } }
+```
+
+`count` is how many rows came back, not the collection total (no `COUNT(*)` is issued). `count < limit` means the last page was reached. Meetings are ordered by `start_datetime`, schedulings by `schedulingDatetime`.
 
 ### Walkthrough
 
@@ -154,7 +173,11 @@ Hit while creating a **user**: `name` 3–50 chars, valid `email`, email must no
 
 Hit while creating a **meeting**: `userId` must exist; both datetimes UTC; `end_datetime` after `start_datetime`; `meetingDurationInMinutes` an integer ≥ 1; `conferenceLink` a valid URL; `name` 3–50 chars; `description` 3–100 chars.
 
-Hit while creating a **scheduling**: host, guest and meeting must all exist; the meeting must be active; `hostId` ≠ `guestId`; `schedulingDatetime` must be UTC **and fall between the meeting's `start_datetime` and `end_datetime`**; `name` 3–50 chars; `purpose` 3–100 chars.
+Hit while creating a **scheduling**: host, guest and meeting must all exist; the meeting must be active; `hostId` ≠ `guestId`; `schedulingDatetime` must be UTC **and fall between the meeting's `start_datetime` and `end_datetime`**; `name` 3–50 chars; `purpose` 3–100 chars; and the slot must be free — a second active booking for the same `(meetingId, schedulingDatetime)` answers `400 "This time slot is already booked"`.
+
+Two rules are enforced by the database rather than by an application check, because a check followed by an insert is not atomic and concurrent requests slip between the two: the unique email, and the partial unique index `scheduling_active_slot_idx` that prevents double booking. Both surface as ordinary `400`s. The index is partial (`WHERE "isActive"`) so a cancelled booking frees its slot.
+
+Foreign keys cascade on delete: removing a user removes their meetings and every scheduling they host or attend; removing a meeting removes its schedulings.
 
 Free-text fields (`name`, `description`, `purpose`) are sanitized with DOMPurify before validation, so HTML tags are stripped rather than rejected.
 
@@ -176,6 +199,8 @@ Domain messages (`"Email is not valid"`) are deliberate and safe to show. Anythi
 ```
 
 The full stack is written to the server log under that same id. Outside production the response also carries a `detail` field with the original message, so local debugging is unaffected.
+
+An `uncaughtException` or `unhandledRejection` is not turned into a response: the process logs it and exits with code 1, leaving a restart to the orchestrator. Once either fires the process state cannot be trusted, so there is no attempt to drain first.
 
 New error types belong in [src/shared/core/errors.ts](../src/shared/core/errors.ts) — controllers should not set status codes.
 
