@@ -32,9 +32,11 @@ Routers are mounted unprefixed in [src/app.ts](../src/app.ts), and **order matte
 
 **useCases/`<name>`/** holds one directory per operation with three files. Controllers implement `BaseController` and own the HTTP concerns, including turning raw request values into typed ones through [RequestInput](../src/shared/core/RequestInput.ts). Use cases implement `UseCase<IRequest, IResponse>`, receive repo _interfaces_ through the constructor, and catch/rethrow: `DefaultError` subclasses pass through untouched, anything else is replaced with a generic `Error`.
 
-**domain/** entities validate inside their constructor, using `Guard` and static `isValid*` helpers, and throw `BadRequestError`. Every field is `readonly` and ids default to a v4 uuid. Constructing an entity _is_ the validation step — there is no separate validator layer.
+**domain/** entities validate inside their constructor, using `Guard` and static `isValid*` helpers, and throw `BadRequestError`. Every field is `readonly` and ids default to a v4 uuid. Constructing an entity _is_ the validation step — there is no separate validator layer. Defaults are applied when assigning to `this`, never by writing back into the props object the caller passed in.
 
-**repositories/** pair an `I<X>Repo` interface with a `drizzle/<X>Repo.ts` implementation. They throw `NotFoundError` on missing rows and always return domain entities through the mapper, never raw rows. Constraint violations are translated here as well, through `isUniqueViolation` in [src/shared/database/errors.ts](../src/shared/database/errors.ts) — drizzle nests the pg error under `cause`, and the check should always be narrowed to a constraint name so unrelated collisions are not swallowed.
+`Email` ([src/modules/user/domain/Email.ts](../src/modules/user/domain/Email.ts)) is the one value object so far: it owns normalising (lowercase) and validating an address, so no caller can store one form while another checks a different one. It is a plain string again at both edges — `toJSON` on the way out, `.value` when writing to the database.
+
+**repositories/** pair an `I<X>Repo` interface with a `drizzle/<X>Repo.ts` implementation. They throw `NotFoundError` on missing rows and always return domain entities through the mapper, never raw rows. `create` returns `void`: an insert either throws or succeeds, so there is no failure flag for callers to check. Constraint violations are translated here as well, through `isUniqueViolation` in [src/shared/database/errors.ts](../src/shared/database/errors.ts) — drizzle nests the pg error under `cause`, and the check should always be narrowed to a constraint name so unrelated collisions are not swallowed.
 
 **mappers/** are thin `toDomain(raw)` wrappers around the entity constructor.
 
@@ -57,6 +59,8 @@ Every error type extends `DefaultError` ([src/shared/core/errors.ts](../src/shar
 
 Anything that is _not_ a `DefaultError` answers `500` with an opaque message plus an `errorId` correlating to the server log. Never widen that to include the original message in production — driver errors carry table names, SQL fragments and parameter values.
 
+A use case that replaces an unexpected failure with a generic message must pass the original as `cause` (`new Error("Unable to create user", { cause: e })`). Node prints the whole chain under the `errorId`, so the log keeps the real stack instead of leaving two unrelated entries to correlate by eye.
+
 New error types belong in `errors.ts`, not as status codes inside controllers.
 
 ## Process lifecycle
@@ -74,6 +78,8 @@ The sequence and its container caveats are documented in [api.md](api.md#shutdow
 Migrations are generated into `src/shared/database/migrations/` — edit the schema and regenerate, never hand-write migration SQL.
 
 `conn.ts` owns an explicit `pg` `Pool` (capped by `DATABASE_POOL_MAX`) and exports it next to the module-level `db` singleton; the pool is exported so the shutdown path can close it and so the migration runner can hold an advisory lock.
+
+The pool has an `error` listener, and it is not optional: an idle client whose connection dies emits there, and with no listener that becomes an `uncaughtException` — which the bootstrap answers by killing the process. A failover or a brief network blip would take every container down at once. With the listener, the broken connection is dropped, requests during the outage fail with `500`, and the pool reconnects on its own once the database is back. Errors raised while a query is running are not routed there: they reject the query and surface as a normal request failure.
 
 **Invariants that two concurrent requests could both satisfy are enforced by a database constraint, not by a check in the use case.** A check followed by an insert is not atomic. This applies to the unique email and to the partial unique index preventing double booking; the application-level check stays only to produce a friendly message.
 

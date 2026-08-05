@@ -219,6 +219,8 @@ The full stack is written to the server log under that same id. Outside producti
 
 An `uncaughtException` or `unhandledRejection` is not turned into a response: the process logs it and exits with code 1, leaving a restart to the orchestrator. Once either fires the process state cannot be trusted, so there is no attempt to drain first.
 
+A database outage is **not** one of those cases. The connection pool drops the broken connections and reconnects on its own: requests that need the database answer `500` while it is down, and start succeeding again once it is back, without a restart. `/health` keeps answering `200` throughout on purpose — it reports whether this instance can serve, not whether its dependencies are up, so a database blip does not make the load balancer pull every instance out at once.
+
 New error types belong in [src/shared/core/errors.ts](../src/shared/core/errors.ts) — controllers should not set status codes.
 
 ## Testing
