@@ -31,9 +31,6 @@ describe("GET /schedulings/:id", () => {
 
     const seededMeeting = createMeeting(firstUser.id);
     const meeting = await storeMeeting(seededMeeting);
-    console.log("firstUser: ", firstUser);
-    console.log("secondUser: ", secondUser);
-    console.log("meeting: ", meeting);
 
     const seededScheduling = createScheduling(
       firstUser.id,

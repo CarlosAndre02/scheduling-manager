@@ -39,7 +39,6 @@ export const createMeeting = (userIdInput?: string) => {
 
 export const storeMeeting = async (meeting: any) => {
   const meetingResponse = await db.insert(meetings).values(meeting).returning();
-  console.log("meetingResponse: ", meetingResponse);
   if (!meetingResponse[0]) throw new Error("Failed to create meeting");
   return meetingResponse[0];
 };
