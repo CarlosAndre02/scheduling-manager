@@ -16,13 +16,16 @@ cp .env.example .env
 
 `.env` is read by both the application and `infra/docker-compose.yaml` (the Postgres container gets its credentials from the same file), so the `POSTGRES_*` values and the `DATABASE_URL` must stay consistent with each other.
 
-| Variable | Default | Used by |
-| --- | --- | --- |
-| `NODE_ENV` | `development` | enables Drizzle query logging when not `production` |
-| `SERVER_PORT` | `4000` | Express |
-| `POSTGRES_HOST` / `POSTGRES_PORT` | `localhost` / `5432` | Postgres container |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `local_user` / `local_password` / `scheduling_manager` | Postgres container |
-| `DATABASE_URL` | `postgresql://local_user:local_password@localhost:5432/scheduling_manager` | Drizzle (app + migrations) |
+| Variable                                              | Default                                                                    | Used by                                                                     |
+| ----------------------------------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `NODE_ENV`                                            | `development`                                                              | enables Drizzle query logging when not `production`                         |
+| `SERVER_PORT`                                         | `4000`                                                                     | Express                                                                     |
+| `POSTGRES_HOST` / `POSTGRES_PORT`                     | `localhost` / `5432`                                                       | Postgres container                                                          |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `local_user` / `local_password` / `scheduling_manager`                     | Postgres container                                                          |
+| `DATABASE_URL`                                        | `postgresql://local_user:local_password@localhost:5432/scheduling_manager` | Drizzle (app + migrations)                                                  |
+| `DATABASE_POOL_MAX`                                   | `10`                                                                       | connection pool ceiling **per container**                                   |
+| `SHUTDOWN_DRAIN_DELAY_MS`                             | `0` locally, `5000`+ behind a load balancer                                | how long `/health` reports unhealthy before connections stop being accepted |
+| `SHUTDOWN_TIMEOUT_MS`                                 | `15000`                                                                    | grace period for in-flight requests before sockets are forced closed        |
 
 ## Running
 
@@ -46,7 +49,13 @@ npm run services:down    # remove containers, keep the volume
 npm run drizzle:studio   # browse the database
 ```
 
-Production-ish run: `npm run build && npm start` (serves `dist/`; migrations are not applied automatically).
+Production-ish run: `npm run build && npm start` (serves `dist/`; migrations are a separate step, see below).
+
+### Shutdown
+
+On `SIGTERM`/`SIGINT` the server drains instead of dying: `/health` starts answering `503`, and only after `SHUTDOWN_DRAIN_DELAY_MS` does it stop accepting connections. That window is what lets a load balancer deregister the instance before its in-flight requests are cut. In-flight work then gets up to `SHUTDOWN_TIMEOUT_MS` to finish before sockets are forced closed, and the connection pool is closed last.
+
+This only works if the Node process actually receives the signal — in a container that means an exec-form `CMD` (or `docker run --init`), so Node is PID 1.
 
 ### Schema changes
 
@@ -54,26 +63,42 @@ Edit [src/shared/database/schema.ts](../src/shared/database/schema.ts), then:
 
 ```bash
 npm run drizzle:generate   # writes a migration into src/shared/database/migrations/
-npm run drizzle:migrate
+npm run db:migrate         # applies it
 ```
+
+`drizzle-kit` only **generates** migrations. Applying them is always [src/shared/database/migrate.ts](../src/shared/database/migrate.ts), which uses the migrator bundled in `drizzle-orm` — the same code path in every environment, and no dev dependency needed in the production image. It takes a Postgres advisory lock and aborts if another run already holds it, so concurrent deploys cannot interleave.
+
+`npm run dev` runs `db:migrate` for you.
+
+### Migrations in production
+
+Run migrations as a **one-shot container from the image being deployed**, inside the VPC (the database is not publicly reachable), before restarting the app containers:
+
+```bash
+docker run --rm --env-file /etc/app.env <image>:<sha> npm run db:migrate:prod
+```
+
+Because the migration ships in the same image as the code, the two can never drift apart. `npm run build` copies the SQL files into `dist/` (via [scripts/copy-migrations.mjs](../scripts/copy-migrations.mjs)) — `tsc` alone would not.
+
+Rolling the app back to a previous image does **not** roll the schema back, so migrations must be backward compatible with the release before them (expand/contract: add a nullable column and backfill in one release, start writing to it in the next, drop the old one only once no running version reads it).
 
 ## Endpoints
 
 Base URL: `http://localhost:4000`. All bodies are JSON.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/` | Hello World |
-| GET | `/health` | liveness check |
-| POST | `/users` | create a user |
-| GET | `/users/:id` | get a user |
-| PUT | `/users/:id` | update a user's name and/or email |
-| POST | `/meetings` | create a meeting (availability window) |
-| GET | `/meetings/:id` | get a meeting |
-| GET | `/meetings/user/:userId` | list a user's meetings |
-| POST | `/schedulings` | book a slot inside a meeting |
-| GET | `/schedulings/:id` | get a scheduling |
-| GET | `/schedulings/host/:hostId` | list a host's schedulings |
+| Method | Path                        | Purpose                                |
+| ------ | --------------------------- | -------------------------------------- |
+| GET    | `/`                         | Hello World                            |
+| GET    | `/health`                   | liveness check                         |
+| POST   | `/users`                    | create a user                          |
+| GET    | `/users/:id`                | get a user                             |
+| PUT    | `/users/:id`                | update a user's name and/or email      |
+| POST   | `/meetings`                 | create a meeting (availability window) |
+| GET    | `/meetings/:id`             | get a meeting                          |
+| GET    | `/meetings/user/:userId`    | list a user's meetings                 |
+| POST   | `/schedulings`              | book a slot inside a meeting           |
+| GET    | `/schedulings/:id`          | get a scheduling                       |
+| GET    | `/schedulings/host/:hostId` | list a host's schedulings              |
 
 Write endpoints answer `{ "success": true, "message": "..." }` with `201`; read endpoints answer `{ "data": ... }` with `200`. Ids are server-generated UUIDs — they are never taken from the request body, so read them back with a GET (or from the database) after creating.
 
@@ -135,14 +160,24 @@ Free-text fields (`name`, `description`, `purpose`) are sanitized with DOMPurify
 
 ### Errors
 
-Failures return `{ "message": "..." }` with the status carried by the thrown error:
+Every failure — including unmatched routes and unexpected crashes — responds with the same shape, `{ "message": "..." }`, and the status carried by the thrown error:
 
-| Status | Error | Typical cause |
-| --- | --- | --- |
-| 400 | `BadRequestError` | failed validation, duplicate email |
-| 404 | `NotFoundError` | unknown id (also `{"error":"Route not found"}` for unmatched routes) |
-| 422 | `ValidationError` | reserved, see [src/shared/core/errors.ts](../src/shared/core/errors.ts) |
-| 500 | — | unexpected; shape is `{ "status": "error", "message": "Internal server error - ..." }` |
+| Status | Error             | Typical cause                                                           |
+| ------ | ----------------- | ----------------------------------------------------------------------- |
+| 400    | `BadRequestError` | failed validation, duplicate email, malformed JSON body                 |
+| 404    | `NotFoundError`   | unknown id, or `"Route not found"` for an unmatched route               |
+| 422    | `ValidationError` | reserved, see [src/shared/core/errors.ts](../src/shared/core/errors.ts) |
+| 500    | —                 | unexpected                                                              |
+
+Domain messages (`"Email is not valid"`) are deliberate and safe to show. Anything unexpected is **not**: driver and query errors carry table names, SQL fragments and parameter values, so `500` responses are opaque and correlate to the log through an `errorId`:
+
+```json
+{ "message": "Internal server error", "errorId": "6f1c8e4a-..." }
+```
+
+The full stack is written to the server log under that same id. Outside production the response also carries a `detail` field with the original message, so local debugging is unaffected.
+
+New error types belong in [src/shared/core/errors.ts](../src/shared/core/errors.ts) — controllers should not set status codes.
 
 ## Testing
 

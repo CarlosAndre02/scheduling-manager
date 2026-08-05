@@ -11,15 +11,15 @@ A Calendly-inspired scheduling backend: Express 5 + TypeScript + PostgreSQL (Dri
 ## Commands
 
 ```bash
-npm run dev            # docker down → up → drizzle migrate → nodemon src/index.ts (port 4000)
+npm run dev            # docker down → up → db:migrate → nodemon src/index.ts (port 4000)
 npm test               # starts the dev server, waits on /health, runs jest --runInBand; posttest stops docker
-npm run build          # tsc → dist/
+npm run build          # tsc → dist/ + copies the migration SQL into dist/
 npm run lint:check     # eslint
 npm run prettier:fix   # format
 npm run commit         # commitizen; commitlint (conventional commits) is enforced by a husky commit-msg hook
 ```
 
-Drizzle: `npm run drizzle:generate` (after editing the schema) → `drizzle:migrate` → `drizzle:studio` / `drizzle:drop`.
+Migrations: `npm run drizzle:generate` (after editing the schema) → `npm run db:migrate`. `drizzle-kit` only generates; applying always goes through `src/shared/database/migrate.ts` (drizzle-orm's own migrator, advisory-locked), so dev and prod share one code path. Production runs the compiled `db:migrate:prod` as a one-shot container. Also available: `drizzle:studio` / `drizzle:drop`.
 
 Docker/Postgres alone: `npm run services:up` / `services:stop` / `services:down`.
 
@@ -40,15 +40,17 @@ npx jest -t "Should return 201"     # by test name
 
 **Request flow:** `routes/index.ts` → `Controller` → `UseCase` → `IRepo` (Drizzle impl) → `Map.toDomain()` → domain entity.
 
-- **routes/index.ts** — also the DI container. Repos, use cases, and controllers are instantiated by hand at module load and closed over by the route handlers. A module needing another module's data imports that module's repo directly (e.g. meeting routes construct `UserRepo`). Routers are mounted unprefixed in [src/index.ts](src/index.ts); order matters — `/meetings/user/:userId` is registered before `/meetings/:id`.
+- **routes/index.ts** — also the DI container. Repos, use cases, and controllers are instantiated by hand at module load and closed over by the route handlers. A module needing another module's data imports that module's repo directly (e.g. meeting routes construct `UserRepo`). Routers are mounted unprefixed in [src/app.ts](src/app.ts); order matters — `/meetings/user/:userId` is registered before `/meetings/:id`.
 - **useCases/<name>/** — one directory per operation holding `Controller` + `UseCase` + `DTO`. Controllers implement `BaseController` and own HTTP concerns plus input sanitization (`TextUtils.sanitize`, DOMPurify + jsdom) before handing a DTO to the use case. Use cases implement `UseCase<IRequest, IResponse>`, take repo interfaces via constructor, and catch/rethrow: `DefaultError` subclasses pass through, anything else becomes a generic `Error`.
 - **domain/** — entities validate in their constructor (via `Guard` and static `isValid*` helpers) and throw `BadRequestError`; all fields are `readonly` and ids default to a v4 uuid. Constructing an entity is the validation step — there is no separate validator layer.
 - **repositories/** — `I<X>Repo` interface + `drizzle/<X>Repo.ts` implementation. Repos throw `NotFoundError` on missing rows and return domain entities through the mapper, never raw rows.
 - **mappers/** — thin `toDomain(raw)` wrappers around the entity constructor.
 
-**Errors:** everything extends `DefaultError` (`errors.ts`) which carries an HTTP `code`. Nothing is caught in routes — Express 5 forwards async rejections to the error middleware at the bottom of [src/index.ts](src/index.ts), which maps `err.code`/`err.message` to the response. Add new error types there rather than status codes in controllers.
+**Errors:** everything extends `DefaultError` (`errors.ts`) which carries an HTTP `code`. Nothing is caught in routes — Express 5 forwards async rejections to [src/shared/core/errorHandler.ts](src/shared/core/errorHandler.ts), which maps `err.code`/`err.message` to a uniform `{ message }` response. Anything that is not a `DefaultError` responds `500` with an opaque message plus an `errorId` that ties it to the server log; never widen that to include the original message in production. Add new error types to `errors.ts` rather than status codes in controllers.
 
-**Database:** [src/shared/database/schema.ts](src/shared/database/schema.ts) is the single source of truth (users / meetings / scheduling, text uuid PKs, shared `timestamps` helper). Migrations are generated into `src/shared/database/migrations/` — edit the schema and regenerate, never hand-write migration SQL. The `db` client in `conn.ts` is a module-level singleton reading `DATABASE_URL`.
+**Entrypoint:** [src/app.ts](src/app.ts) builds the Express app (middlewares, routes, error handlers); [src/index.ts](src/index.ts) owns the process — `listen`, keep-alive timeouts tuned above the ALB idle timeout, and the drain-then-close shutdown driven by `shared/core/lifecycle.ts`. `/health` answers `503` while draining.
+
+**Database:** [src/shared/database/schema.ts](src/shared/database/schema.ts) is the single source of truth (users / meetings / scheduling, text uuid PKs, shared `timestamps` helper). Migrations are generated into `src/shared/database/migrations/` — edit the schema and regenerate, never hand-write migration SQL. `conn.ts` owns an explicit `pg` `Pool` (capped by `DATABASE_POOL_MAX`) and exports it alongside the module-level `db` singleton — the pool is exported so the shutdown path can close it.
 
 ## Conventions
 
