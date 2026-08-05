@@ -32,6 +32,8 @@ Migrations: `npm run drizzle:generate` after editing the schema, then `npm run d
 
 ## Rules
 
+- Raw `req.body`/`req.params` values are read only through `RequestInput` ([src/shared/core/RequestInput.ts](src/shared/core/RequestInput.ts)) — never `.trim()` a field straight off the request, which turns a missing field into a 500.
+- Validate and reject input; never rewrite it. Free text is stored exactly as sent, and anything containing an HTML tag is refused with a 400 — this API answers JSON, so escaping is the consumer's job at render time.
 - Datetimes crossing the API boundary must be full ISO-8601 UTC strings ending in `Z` (`TextUtils.isValidUTCDate`); use cases validate the string, then convert to `Date` before building the entity.
 - Create endpoints respond `{ success, message }`; read endpoints respond `{ data }`; list endpoints add `{ pagination }` and take `limit`/`offset` through `parsePagination` ([src/shared/core/Pagination.ts](src/shared/core/Pagination.ts)) — never return an unbounded collection.
 - Invariants that two concurrent requests could both satisfy are enforced by a database constraint, not by a check in a use case.

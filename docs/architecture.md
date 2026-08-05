@@ -30,13 +30,26 @@ routes/index.ts → Controller → UseCase → IRepo (drizzle impl) → Map.toDo
 
 Routers are mounted unprefixed in [src/app.ts](../src/app.ts), and **order matters**: `/meetings/user/:userId` is registered before `/meetings/:id`, otherwise `user` would be captured as an id.
 
-**useCases/`<name>`/** holds one directory per operation with three files. Controllers implement `BaseController`, own the HTTP concerns and sanitize input (`TextUtils.sanitize`, DOMPurify over jsdom) before handing a DTO to the use case. Use cases implement `UseCase<IRequest, IResponse>`, receive repo _interfaces_ through the constructor, and catch/rethrow: `DefaultError` subclasses pass through untouched, anything else is replaced with a generic `Error`.
+**useCases/`<name>`/** holds one directory per operation with three files. Controllers implement `BaseController` and own the HTTP concerns, including turning raw request values into typed ones through [RequestInput](../src/shared/core/RequestInput.ts). Use cases implement `UseCase<IRequest, IResponse>`, receive repo _interfaces_ through the constructor, and catch/rethrow: `DefaultError` subclasses pass through untouched, anything else is replaced with a generic `Error`.
 
 **domain/** entities validate inside their constructor, using `Guard` and static `isValid*` helpers, and throw `BadRequestError`. Every field is `readonly` and ids default to a v4 uuid. Constructing an entity _is_ the validation step — there is no separate validator layer.
 
 **repositories/** pair an `I<X>Repo` interface with a `drizzle/<X>Repo.ts` implementation. They throw `NotFoundError` on missing rows and always return domain entities through the mapper, never raw rows. Constraint violations are translated here as well, through `isUniqueViolation` in [src/shared/database/errors.ts](../src/shared/database/errors.ts) — drizzle nests the pg error under `cause`, and the check should always be narrowed to a constraint name so unrelated collisions are not swallowed.
 
 **mappers/** are thin `toDomain(raw)` wrappers around the entity constructor.
+
+## Input
+
+Two layers, split by what they know about:
+
+| Layer      | Checks                                       | Example                       |
+| ---------- | -------------------------------------------- | ----------------------------- |
+| Controller | shape: presence, type, uuid format, trimming | `hostId` exists and is a uuid |
+| Entity     | content: lengths, dates, URLs, no markup     | `name` is 3–50 chars          |
+
+`RequestInput` is the only place allowed to read a raw `req.body`/`req.params` value. Reaching for `.trim()` on a field that was never sent throws a `TypeError`, which the error handler can only report as an opaque `500` — a client mistake logged as an internal failure.
+
+**Input is rejected, never rewritten.** The project previously ran free text through an HTML sanitizer, which escaped `<` in ordinary prose (`Ana <3 Bob` was persisted as `Ana &lt;3 Bob`) while still allowing safe markup through. Since the API answers JSON, which browsers do not execute, escaping belongs to the consumer at render time; anything containing a tag is refused with a `400` instead of being silently mutated.
 
 ## Errors
 

@@ -167,6 +167,22 @@ curl -s -X POST $BASE/schedulings -H 'Content-Type: application/json' -d "{
 curl -s $BASE/schedulings/host/$HOST_ID
 ```
 
+### Input handling
+
+Input is **validated and rejected, never rewritten**. A request either describes something the API can store verbatim or it gets a `400` explaining what is wrong — nothing is silently mutated on the way in.
+
+Two layers do the work:
+
+- **Controllers** check the shape: every field must be present, of the right type, and ids must be uuids. Values are trimmed. A missing or malformed field answers `400` (`"start_datetime is required and must be a string"`, `"hostId must be a valid uuid"`) instead of blowing up further down.
+- **Entities** check the content: lengths, date format, URL, and the business rules below.
+
+Consequences worth knowing:
+
+- **Emails are lowercased** before validation and storage, so `Carlos@Example.COM` and `carlos@example.com` are the same account rather than two.
+- **Free-text fields reject HTML tags** (`400 "Name must not contain HTML"`) rather than stripping them. What is refused is a tag — `<b>`, `</div>`, `<!--` — not the `<` character, so `Ana <3 Bob` and `5 < 10` are stored exactly as sent. This API answers JSON, which a browser does not execute; escaping belongs to whoever renders the value, and storing pre-escaped text would corrupt it for every consumer.
+- **`conferenceLink` must carry an `http`/`https` protocol** and may not point at loopback, private or link-local addresses — `meet.example.com` and `http://169.254.169.254/…` are both rejected.
+- **Bodies are capped at 10kb**, answering `413` beyond that.
+
 ### Validation rules worth knowing
 
 Hit while creating a **user**: `name` 3–50 chars, valid `email`, email must not already exist.
@@ -179,18 +195,19 @@ Two rules are enforced by the database rather than by an application check, beca
 
 Foreign keys cascade on delete: removing a user removes their meetings and every scheduling they host or attend; removing a meeting removes its schedulings.
 
-Free-text fields (`name`, `description`, `purpose`) are sanitized with DOMPurify before validation, so HTML tags are stripped rather than rejected.
-
 ### Errors
 
 Every failure — including unmatched routes and unexpected crashes — responds with the same shape, `{ "message": "..." }`, and the status carried by the thrown error:
 
-| Status | Error             | Typical cause                                                           |
-| ------ | ----------------- | ----------------------------------------------------------------------- |
-| 400    | `BadRequestError` | failed validation, duplicate email, malformed JSON body                 |
-| 404    | `NotFoundError`   | unknown id, or `"Route not found"` for an unmatched route               |
-| 422    | `ValidationError` | reserved, see [src/shared/core/errors.ts](../src/shared/core/errors.ts) |
-| 500    | —                 | unexpected                                                              |
+| Status | Error             | Typical cause                                                                                    |
+| ------ | ----------------- | ------------------------------------------------------------------------------------------------ |
+| 400    | `BadRequestError` | failed validation, missing or malformed field, non-uuid id, duplicate email, malformed JSON body |
+| 404    | `NotFoundError`   | unknown id, or `"Route not found"` for an unmatched route                                        |
+| 413    | —                 | request body over 10kb                                                                           |
+| 422    | `ValidationError` | reserved, see [src/shared/core/errors.ts](../src/shared/core/errors.ts)                          |
+| 500    | —                 | unexpected                                                                                       |
+
+An id that is not a uuid answers `400` rather than `404`: the request is malformed, and rejecting it avoids a pointless query.
 
 Domain messages (`"Email is not valid"`) are deliberate and safe to show. Anything unexpected is **not**: driver and query errors carry table names, SQL fragments and parameter values, so `500` responses are opaque and correlate to the log through an `errorId`:
 
