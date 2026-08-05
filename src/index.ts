@@ -57,3 +57,16 @@ async function shutdown(signal: string) {
 
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 process.once("SIGINT", () => void shutdown("SIGINT"));
+
+// Past this point the process state cannot be trusted, so there is no attempt
+// to drain: log what happened and let the orchestrator start a fresh instance.
+function crash(reason: string, err: unknown) {
+  console.error(`\n[${reason}] Terminating`);
+  console.error(err);
+  process.exit(1);
+}
+
+process.on("uncaughtException", (err) => crash("uncaughtException", err));
+process.on("unhandledRejection", (reason) =>
+  crash("unhandledRejection", reason),
+);
