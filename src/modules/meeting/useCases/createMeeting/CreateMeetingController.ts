@@ -34,11 +34,6 @@ export class CreateMeetingController implements BaseController {
 
     const response = await this.useCase.execute(meetingDTO);
 
-    if (!response.success)
-      return res
-        .status(400)
-        .json({ success: false, message: "Unable to create meeting" });
-
     return res.status(201).json({ success: true, message: response.message });
   }
 }

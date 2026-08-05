@@ -1,7 +1,6 @@
 import { v4 as uuidV4 } from "uuid";
 import { Guard } from "../../../shared/core/Guard";
 import { BadRequestError } from "../../../shared/core/errors";
-import { TextUtils } from "../../../shared/utils/TextUtils";
 
 export type SchedulingProps = {
   id?: string;
@@ -29,16 +28,13 @@ export class Scheduling {
   public readonly created_at?: Date;
 
   public constructor(scheduling: SchedulingProps) {
-    scheduling.id = scheduling.id ?? uuidV4();
-    scheduling.isActive = scheduling.isActive ?? true;
-
     this.validate(scheduling);
 
-    this.id = scheduling.id;
+    this.id = scheduling.id ?? uuidV4();
     this.schedulingDatetime = scheduling.schedulingDatetime;
     this.name = scheduling.name;
     this.purpose = scheduling.purpose;
-    this.isActive = scheduling.isActive;
+    this.isActive = scheduling.isActive ?? true;
     this.hostId = scheduling.hostId;
     this.guestId = scheduling.guestId;
     this.meetingId = scheduling.meetingId;
@@ -67,11 +63,10 @@ export class Scheduling {
         "Purpose should be between 3 and 100 characters",
       );
 
-    if (TextUtils.containsHtmlTag(scheduling.name))
-      throw new BadRequestError("Name must not contain HTML");
-
-    if (TextUtils.containsHtmlTag(scheduling.purpose))
-      throw new BadRequestError("Purpose must not contain HTML");
+    Guard.againstHtmlBulk([
+      { argument: scheduling.name, argumentName: "Name" },
+      { argument: scheduling.purpose, argumentName: "Purpose" },
+    ]);
 
     if (!Scheduling.isValidDate(scheduling.schedulingDatetime))
       throw new BadRequestError("schedulingDatetime must be a valid datetime");

@@ -9,23 +9,18 @@ import { Pagination } from "../../../../shared/core/Pagination";
 import { SchedulingMap } from "../../mappers/SchedulingMap";
 
 export class SchedulingRepo implements ISchedulingRepo {
-  async create(scheduling: Scheduling): Promise<{ success: boolean }> {
-    let result;
-
+  async create(scheduling: Scheduling): Promise<void> {
     try {
-      result = await db
-        .insert(schedulingTable)
-        .values({
-          id: scheduling.id,
-          schedulingDatetime: scheduling.schedulingDatetime,
-          name: scheduling.name,
-          purpose: scheduling.purpose,
-          isActive: scheduling.isActive ?? true,
-          hostId: scheduling.hostId,
-          guestId: scheduling.guestId,
-          meetingId: scheduling.meetingId,
-        })
-        .returning();
+      await db.insert(schedulingTable).values({
+        id: scheduling.id,
+        schedulingDatetime: scheduling.schedulingDatetime,
+        name: scheduling.name,
+        purpose: scheduling.purpose,
+        isActive: scheduling.isActive ?? true,
+        hostId: scheduling.hostId,
+        guestId: scheduling.guestId,
+        meetingId: scheduling.meetingId,
+      });
     } catch (e: unknown) {
       // Two guests booking the same slot at the same time both pass every
       // check in the use case; the partial unique index is what actually
@@ -35,12 +30,6 @@ export class SchedulingRepo implements ISchedulingRepo {
       }
       throw e;
     }
-
-    if (!result[0]) {
-      return { success: false };
-    }
-
-    return { success: true };
   }
 
   async getSchedulingBySchedulingId(schedulingId: string): Promise<Scheduling> {

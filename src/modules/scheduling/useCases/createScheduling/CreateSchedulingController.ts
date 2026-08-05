@@ -32,11 +32,6 @@ export class CreateSchedulingController implements BaseController {
 
     const response = await this.useCase.execute(dto);
 
-    if (!response.success)
-      return res
-        .status(400)
-        .json({ success: false, message: "Unable to create scheduling" });
-
     return res.status(201).json({ success: true, message: response.message });
   }
 }

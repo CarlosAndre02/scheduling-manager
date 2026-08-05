@@ -7,7 +7,6 @@ import { UserRepo } from "../../../user/repositories/drizzle/UserRepo";
 import { TextUtils } from "../../../../shared/utils/TextUtils";
 
 type CreateMeetingResponse = {
-  success: boolean;
   message: string;
 };
 
@@ -38,19 +37,13 @@ export class CreateMeetingUseCase
     });
 
     try {
-      const result = await this.meetingRepo.create(meeting);
-      if (!result.success)
-        throw new BadRequestError("Unable to create meeting");
+      await this.meetingRepo.create(meeting);
 
-      return {
-        success: true,
-        message: "Meeting created successfully",
-      };
+      return { message: "Meeting created successfully" };
     } catch (e: unknown) {
       if (e instanceof DefaultError) throw e;
 
-      console.error(e);
-      throw new Error("Unable to create meeting");
+      throw new Error("Unable to create meeting", { cause: e });
     }
   }
 }

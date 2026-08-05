@@ -32,19 +32,16 @@ export class Meeting {
   public readonly created_at?: Date;
 
   public constructor(meeting: MeetingProps) {
-    meeting.id = meeting.id ?? uuidV4();
-    meeting.isActive = meeting.isActive ?? true;
-
     this.validate(meeting);
 
-    this.id = meeting.id;
+    this.id = meeting.id ?? uuidV4();
     this.name = meeting.name;
     this.description = meeting.description;
     this.start_datetime = meeting.start_datetime;
     this.end_datetime = meeting.end_datetime;
     this.meetingDurationInMinutes = meeting.meetingDurationInMinutes;
     this.conferenceLink = meeting.conferenceLink;
-    this.isActive = meeting.isActive;
+    this.isActive = meeting.isActive ?? true;
     this.userId = meeting.userId;
     this.updated_at = meeting.updated_at;
     this.created_at = meeting.created_at;
@@ -72,11 +69,10 @@ export class Meeting {
         "Description should be between 3 and 100 characters",
       );
 
-    if (TextUtils.containsHtmlTag(meeting.name))
-      throw new BadRequestError("Name must not contain HTML");
-
-    if (TextUtils.containsHtmlTag(meeting.description))
-      throw new BadRequestError("Description must not contain HTML");
+    Guard.againstHtmlBulk([
+      { argument: meeting.name, argumentName: "Name" },
+      { argument: meeting.description, argumentName: "Description" },
+    ]);
 
     if (!Meeting.isValidUTCDate(meeting.start_datetime))
       throw new BadRequestError("start_datetime must be a valid UTC datetime");

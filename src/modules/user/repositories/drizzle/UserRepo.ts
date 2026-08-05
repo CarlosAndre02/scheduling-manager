@@ -37,16 +37,12 @@ export class UserRepo implements IUserRepo {
     return UserMap.toDomain(userResponse[0]);
   }
 
-  async create(user: User): Promise<{ success: boolean }> {
-    let result;
-
+  async create(user: User): Promise<void> {
     try {
-      result = await db
-        .insert(users)
-        .values({
-          ...user,
-        })
-        .returning();
+      await db.insert(users).values({
+        ...user,
+        email: user.email.value,
+      });
     } catch (e: unknown) {
       // The caller checks exists() first, but that check and this insert are
       // not atomic: concurrent signups both pass it and one hits the
@@ -56,14 +52,6 @@ export class UserRepo implements IUserRepo {
       }
       throw e;
     }
-
-    if (!result[0]) {
-      return {
-        success: false,
-      };
-    }
-
-    return { success: true };
   }
 
   async update(user: UpdateUserParams): Promise<User> {

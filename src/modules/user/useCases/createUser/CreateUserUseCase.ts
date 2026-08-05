@@ -5,7 +5,6 @@ import { IUserRepo } from "../../repositories/IUserRepo";
 import { CreateUserDTO } from "./CreateUserDTO";
 
 type CreateUserResponse = {
-  success: boolean;
   message: string;
 };
 
@@ -22,22 +21,17 @@ export class CreateUserUseCase
     const user = UserMap.toDomain(request);
 
     try {
-      const userAlreadyExists = await this.userRepo.exists(user.email);
+      const userAlreadyExists = await this.userRepo.exists(user.email.value);
       if (userAlreadyExists)
         throw new BadRequestError("User already exists with this email");
 
-      const result = await this.userRepo.create(user);
-      if (!result.success) throw new BadRequestError("Unable to create user");
+      await this.userRepo.create(user);
 
-      return {
-        success: true,
-        message: "User created successfully",
-      };
+      return { message: "User created successfully" };
     } catch (e: unknown) {
       if (e instanceof DefaultError) throw e;
 
-      console.error(e);
-      throw new Error("Unable to create user");
+      throw new Error("Unable to create user", { cause: e });
     }
   }
 }

@@ -31,14 +31,6 @@ export class TextUtils {
   }
 
   /**
-   * Emails are stored lowercased so `Carlos@Example.COM` and
-   * `carlos@example.com` cannot become two accounts for the same person.
-   */
-  public static normalizeEmail(email: string): string {
-    return email.trim().toLowerCase();
-  }
-
-  /**
    * Detects the start of an HTML tag, not the `<` character itself: `Ana <3
    * Bob` and `5 < 10` are ordinary text and must survive untouched, while
    * `<b>`, `</div>` and `<!--` are rejected.

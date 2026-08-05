@@ -1,7 +1,7 @@
 import { v4 as uuidV4 } from "uuid";
 import { Guard } from "../../../shared/core/Guard";
 import { BadRequestError } from "../../../shared/core/errors";
-import { TextUtils } from "../../../shared/utils/TextUtils";
+import { Email } from "./Email";
 
 export type UserProps = {
   id?: string;
@@ -14,18 +14,16 @@ export type UserProps = {
 export class User {
   public readonly id: string;
   public readonly name: string;
-  public readonly email: string;
+  public readonly email: Email;
   public readonly updated_at?: Date | null;
   public readonly created_at?: Date;
 
   public constructor(user: UserProps) {
-    user.id = user.id ?? uuidV4();
-
     this.validate(user);
 
-    this.id = user.id;
+    this.id = user.id ?? uuidV4();
     this.name = user.name;
-    this.email = user.email;
+    this.email = Email.create(user.email);
     this.updated_at = user.updated_at;
     this.created_at = user.created_at;
   }
@@ -39,21 +37,10 @@ export class User {
     if (!User.isValidName(user.name))
       throw new BadRequestError("Name should be between 3 and 50 characters");
 
-    if (TextUtils.containsHtmlTag(user.name))
-      throw new BadRequestError("Name must not contain HTML");
-
-    if (!User.isValidEmail(user.email))
-      throw new BadRequestError("Email is not valid");
+    Guard.againstHtml(user.name, "Name");
   }
 
   public static isValidName(name: string) {
     return name.length >= 3 && name.length <= 50;
-  }
-
-  public static isValidEmail(email: string) {
-    const re =
-      // eslint-disable-next-line
-      /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
-    return re.test(email);
   }
 }

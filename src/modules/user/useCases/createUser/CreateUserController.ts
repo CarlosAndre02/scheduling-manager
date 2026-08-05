@@ -4,7 +4,6 @@ import { CreateUserUseCase } from "./CreateUserUseCase";
 import { BaseController } from "../../../../shared/core/BaseController";
 import { CreateUserDTO } from "./CreateUserDTO";
 import { requireString } from "../../../../shared/core/RequestInput";
-import { TextUtils } from "../../../../shared/utils/TextUtils";
 
 export class CreateUserController implements BaseController {
   private useCase: CreateUserUseCase;
@@ -18,15 +17,10 @@ export class CreateUserController implements BaseController {
 
     const userDTO: CreateUserDTO = {
       name: requireString(body.name, "name"),
-      email: TextUtils.normalizeEmail(requireString(body.email, "email")),
+      email: requireString(body.email, "email"),
     };
 
     const response = await this.useCase.execute(userDTO);
-
-    if (!response.success)
-      return res
-        .status(400)
-        .json({ success: false, message: "Unable to create user" });
 
     return res.status(201).json({ success: true, message: response.message });
   }

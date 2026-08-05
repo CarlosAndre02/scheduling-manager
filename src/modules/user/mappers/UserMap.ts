@@ -1,7 +1,7 @@
-import { User } from "../domain/User";
+import { User, UserProps } from "../domain/User";
 
 export class UserMap {
-  public static toDomain(raw: any): User {
+  public static toDomain(raw: UserProps): User {
     const user = new User(raw);
     return user;
   }

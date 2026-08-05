@@ -7,7 +7,6 @@ import {
   optionalString,
   requireUuid,
 } from "../../../../shared/core/RequestInput";
-import { TextUtils } from "../../../../shared/utils/TextUtils";
 
 export class EditUserController implements BaseController {
   private useCase: EditUserUseCase;
@@ -18,12 +17,11 @@ export class EditUserController implements BaseController {
 
   async execute(req: Request, res: Response): Promise<Response> {
     const body = req.body ?? {};
-    const email = optionalString(body.email, "email");
 
     const editUserDTO: EditUserDTO = {
       userId: requireUuid(req.params.id, "id"),
       name: optionalString(body.name, "name"),
-      email: email ? TextUtils.normalizeEmail(email) : undefined,
+      email: optionalString(body.email, "email"),
     };
 
     const user = await this.useCase.execute(editUserDTO);

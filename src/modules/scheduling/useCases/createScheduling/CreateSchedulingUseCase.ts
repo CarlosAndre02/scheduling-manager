@@ -1,8 +1,4 @@
-import {
-  BadRequestError,
-  DefaultError,
-  NotFoundError,
-} from "../../../../shared/core/errors";
+import { BadRequestError, DefaultError } from "../../../../shared/core/errors";
 import { UseCase } from "../../../../shared/core/UseCase";
 import { TextUtils } from "../../../../shared/utils/TextUtils";
 import { SchedulingMap } from "../../mappers/SchedulingMap";
@@ -12,7 +8,6 @@ import { UserRepo } from "../../../user/repositories/drizzle/UserRepo";
 import { MeetingRepo } from "../../../meeting/repositories/drizzle/MeetingRepo";
 
 type CreateSchedulingResponse = {
-  success: boolean;
   message: string;
 };
 
@@ -36,14 +31,14 @@ export class CreateSchedulingUseCase
   async execute(
     request: CreateSchedulingDTO,
   ): Promise<CreateSchedulingResponse> {
-    const [host, guest, meeting] = await Promise.all([
+    // The two user lookups run for their side effect: the repos throw
+    // NotFoundError when the host or the guest does not exist.
+    const [, , meeting] = await Promise.all([
       this.userRepo.getUserByUserId(request.hostId),
       this.userRepo.getUserByUserId(request.guestId),
       this.meetingRepo.getMeetingByMeetingId(request.meetingId),
     ]);
 
-    if (!host || !guest) throw new NotFoundError("User not found.");
-    if (!meeting) throw new NotFoundError("Meeting not found.");
     if (!meeting.isActive) throw new BadRequestError("Meeting is not active");
 
     if (request.hostId === request.guestId)
@@ -71,15 +66,13 @@ export class CreateSchedulingUseCase
     });
 
     try {
-      const result = await this.schedulingRepo.create(scheduling);
-      if (!result.success)
-        throw new BadRequestError("Unable to create scheduling");
+      await this.schedulingRepo.create(scheduling);
 
-      return { success: true, message: "Scheduling created successfully" };
+      return { message: "Scheduling created successfully" };
     } catch (e: unknown) {
       if (e instanceof DefaultError) throw e;
-      console.error(e);
-      throw new Error("Unable to create scheduling");
+
+      throw new Error("Unable to create scheduling", { cause: e });
     }
   }
 }
