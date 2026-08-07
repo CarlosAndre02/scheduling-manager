@@ -34,7 +34,7 @@ Routers are mounted unprefixed in [src/app.ts](../src/app.ts), and **order matte
 
 **domain/** entities validate inside their constructor, using `Guard` and static `isValid*` helpers, and throw `BadRequestError`. Every field is `readonly` and ids default to a v4 uuid. Constructing an entity _is_ the validation step — there is no separate validator layer. Defaults are applied when assigning to `this`, never by writing back into the props object the caller passed in.
 
-`Email` ([src/modules/user/domain/Email.ts](../src/modules/user/domain/Email.ts)) is the one value object so far: it owns normalising (lowercase) and validating an address, so no caller can store one form while another checks a different one. It is a plain string again at both edges — `toJSON` on the way out, `.value` when writing to the database.
+`Email` ([src/modules/user/domain/Email.ts](../src/modules/user/domain/Email.ts)) is a value object: it owns normalising (lowercase) and validating an address, so no caller can store one form while another checks a different one. It is a plain string again at both edges — `toJSON` on the way out, `.value` when writing to the database.
 
 **repositories/** pair an `I<X>Repo` interface with a `drizzle/<X>Repo.ts` implementation. They throw `NotFoundError` on missing rows and always return domain entities through the mapper, never raw rows. `create` returns `void`: an insert either throws or succeeds, so there is no failure flag for callers to check. Constraint violations are translated here as well, through `isUniqueViolation` in [src/shared/database/errors.ts](../src/shared/database/errors.ts) — drizzle nests the pg error under `cause`, and the check should always be narrowed to a constraint name so unrelated collisions are not swallowed.
 
@@ -51,7 +51,7 @@ Two layers, split by what they know about:
 
 `RequestInput` is the only place allowed to read a raw `req.body`/`req.params` value. Reaching for `.trim()` on a field that was never sent throws a `TypeError`, which the error handler can only report as an opaque `500` — a client mistake logged as an internal failure.
 
-**Input is rejected, never rewritten.** The project previously ran free text through an HTML sanitizer, which escaped `<` in ordinary prose (`Ana <3 Bob` was persisted as `Ana &lt;3 Bob`) while still allowing safe markup through. Since the API answers JSON, which browsers do not execute, escaping belongs to the consumer at render time; anything containing a tag is refused with a `400` instead of being silently mutated.
+**Input is rejected, never rewritten.** Running free text through an HTML sanitizer corrupts it — `<` in ordinary prose (`Ana <3 Bob`) comes back escaped — while still admitting the markup a sanitizer considers safe. Since the API answers JSON, which browsers do not execute, escaping belongs to the consumer at render time; anything containing a tag is refused with a `400` instead of being silently mutated.
 
 ## Errors
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A Calendly-inspired scheduling backend: Express 5 + TypeScript + PostgreSQL (Drizzle ORM), organized as Clean Architecture. There is also an unfinished `serverless/` AWS SAM project (separate npm package, its own `tsconfig.json`) that is currently just a Hello World Lambda handler and shares no code with `src/`.
+A Calendly-inspired scheduling backend: Express 5 + TypeScript + PostgreSQL (Drizzle ORM), organized as Clean Architecture. A `serverless/` AWS SAM project sits alongside it as a separate npm package with its own `tsconfig.json`, and shares no code with `src/`.
 
 ## Documentation
 
@@ -14,6 +14,7 @@ Read the relevant one before changing an area, and update it when a flow changes
 
 - [docs/architecture.md](docs/architecture.md) — layering, request flow, DI, error model, process lifecycle, database design, tooling
 - [docs/api.md](docs/api.md) — setup, running, testing, HTTP contract, migrations in production
+- [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, and the pitfalls found along the way
 
 ## Commands
 
@@ -47,5 +48,6 @@ Migrations: `npm run drizzle:generate` after editing the schema, then `npm run d
 ## General Rules
 
 - Do not commit or push on your own. Make the changes and stop; commit/push only when the user explicitly asks (never as a "wrap up the task" step).
-- Documentation is centralized in docs/. README.md is kept lean on purpose — do not duplicate docs there; when a flow changes, update /docs.
+- Documentation is centralized in docs/; when a flow changes, update /docs. README.md carries only the entry point — why the project exists, requirements, how to run it, how to test it, and the shape of the architecture — and links to /docs for everything else.
+- Documentation never records current state or anything else that ages ("currently", "so far", "previously"). Write the rule or the reason, not the snapshot.
 - Do not assume anything. Always ask when in doubt.
