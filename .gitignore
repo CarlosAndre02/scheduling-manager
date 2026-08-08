@@ -35,3 +35,11 @@ Thumbs.db
 # Logs
 logs/
 *.log
+
+# Terraform (.terraform.lock.hcl is committed on purpose — it pins provider versions)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!*.tfvars.example

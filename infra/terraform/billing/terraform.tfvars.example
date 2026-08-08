@@ -1,0 +1,4 @@
+alert_email = "you@example.com"
+
+warning_usd = 8
+ceiling_usd = 12

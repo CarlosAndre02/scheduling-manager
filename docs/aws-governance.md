@@ -98,7 +98,7 @@ Two independent timers are worth knowing: the permission set's **session duratio
 5. **Create the child accounts.** Member accounts start with no root password — either set one with MFA per account, or use centralized root access management to remove their root credentials entirely.
 6. **Create the user, the group, the permission sets, and the assignments**, then work exclusively through the portal.
 
-Billing, budgets, CloudTrail and alarms are a separate step, but note that **activating IAM access to billing data is root-only** — flip it during the first root session to avoid coming back.
+7. **Turn on the cost guardrails** — see below. Two of the switches are root-only, so they belong in the first root session.
 
 ## Daily use
 
@@ -126,6 +126,74 @@ AWS_PROFILE=dev terraform plan
 ```
 
 `region` here is where resources live and is independent of the Identity Center region.
+
+## Cost guardrails
+
+AWS has no spending cap. The bill grows until something is switched off, and the invoice arrives after the month it describes — so an account with no guardrail finds out about a mistake thirty days late.
+
+The implementation is [infra/terraform/billing](../infra/terraform/billing), which carries the runbook; this section is the reasoning behind it.
+
+Two switches gate everything, and only root can flip them, both from the account menu at the top right of the console:
+
+- **Account → IAM user and role access to Billing information → Edit → Activate IAM Access.** Without it, no permission set reaches billing data — the policy grants the action and the account refuses it anyway, which reads as a broken policy and is not one.
+- **Billing and Cost Management → Cost Explorer.** Opening it once enables it, and it gates both forecasting and anomaly detection.
+
+Both backfill data over roughly a day, so nothing works the moment they are enabled.
+
+### Two mechanisms
+
+They answer separate questions:
+
+|                            | Catches                             | Fires on                              |
+| -------------------------- | ----------------------------------- | ------------------------------------- |
+| **Budget**                 | the climb toward a number you chose | absolute spend                        |
+| **Cost Anomaly Detection** | a jump that stays under that number | deviation from learned spend patterns |
+
+A budget alone assumes you picked the right ceiling. Anomaly detection needs no number, but needs history — roughly ten days to form a baseline, and up to a day to report.
+
+**`ACTUAL` and `FORECASTED` differ by time, not by certainty.** `ACTUAL` is spend already incurred this month. `FORECASTED` is AWS projecting the month's _total_ from the current run rate, so a `FORECASTED` threshold of $12 fires on day 5 with $2 spent, if the pace projects past $12 by month end. Neither makes cost reversible; the forecast only buys reaction time. That is why warnings use both and any action would use only `ACTUAL` — acting on a projection means shutting things down over a prediction that can be wrong. Forecasting needs roughly five weeks of history, so a `FORECASTED` notification on a new account is inert rather than broken.
+
+**The service monitor is not yours to create.** Enabling Cost Explorer makes AWS create a `SERVICE` anomaly monitor automatically, and an account may hold exactly one — so creating another fails, and the existing one has to be adopted into Terraform instead.
+
+What is worth managing is the **subscription**. The one AWS attaches by default reports only anomalies above 40% _and_ $100 of expected spend, a threshold a small account never reaches, which leaves anomaly detection enabled and permanently silent.
+
+**Budgets measure gross spend, not net.** With a promotional credit applied, net cost reads `$0` and no threshold fires until the credit is exhausted — precisely when a warning would have mattered. Hence `include_credit = false` on every budget.
+
+Budget data refreshes about three times a day, which sets the floor on how fast any of this reacts: a threshold is crossed hours before the email.
+
+### Why nothing shuts down automatically
+
+AWS Budgets can run actions at a threshold, and they are deliberately not used. Budget actions do exactly three things, each aimed at something **named**: attach an IAM policy to listed principals, attach an SCP to an account, or stop listed EC2/RDS instance IDs in one region of the same account.
+
+That falls short of an off switch in ways that matter:
+
+- The lists are literal, not queries. A resource created afterwards is not covered.
+- ALB, NAT Gateway, EBS, S3, data transfer and Lambda have no stop action and keep billing regardless.
+- Denying IAM permissions blocks _new_ spend from being provisioned; it does nothing about what already runs.
+- **A stopped RDS instance restarts by itself after seven days**, so the bill resumes on its own.
+- Actions run on the budget refresh, hours after the threshold is crossed.
+
+Netted out, an automated stop takes the service down for paying users, late, incompletely, and temporarily. For software meant to be sold, that failure is worse than the overage it prevents. A billing threshold is a signal to a human, not a control.
+
+### What actually bounds the bill
+
+In descending order of effect:
+
+1. **Credentials that cannot leak.** Nearly every catastrophic AWS bill starts with a long-lived access key in a public repository, followed by GPU instances in every region. OIDC for CI, Identity Center for people, MFA everywhere, and a secret scanner in the pre-commit hook.
+2. **Preventive IAM conditions.** `aws:RequestedRegion` and an `ec2:InstanceType` allowlist refuse the API call outright, where a budget only reacts later. As an SCP these cannot be bypassed; as ordinary role policies a compromised admin can strip them — and neither restricts root, which is why root is not a daily driver.
+3. **Hard caps in the architecture.** Auto Scaling `max_size`, Lambda reserved concurrency, explicit CloudWatch Logs retention, an RDS storage autoscaling maximum, and avoiding NAT Gateway. These are the only genuinely rigid ceilings.
+4. **Detection.** CloudTrail (first management-events trail free) to know what happened, GuardDuty to flag mining and credential use from unusual locations, plus the budgets and anomaly monitor here.
+
+Lowering a service quota is not an option: Service Quotas only accepts values above the current one. WAF is a real defence but is priced per web ACL, per rule and per million requests, which can exceed a hobby-scale monthly budget on its own.
+
+Region choice belongs on this list too. The free tier is region-independent, so within it the region costs nothing either way — but São Paulo (`sa-east-1`) is among the most expensive regions on the platform, running roughly 50–65% above `us-east-1` for equivalent compute, with a wider gap on data transfer out. The trade is latency: roughly 10–30 ms from Brazil to `sa-east-1` against 110–150 ms to `us-east-1`, which matters for interactive workloads and not for an API answering JSON. Confirm current figures in the pricing calculator before committing; the ratio moves by instance family.
+
+### What the guardrails themselves cost
+
+- Budget **monitoring** is free and unlimited. Budget **actions** are what carry a price — the first two action-enabled budgets are free per month, then $0.10 per day each.
+- Cost Anomaly Detection is free.
+- Email subscribers on a budget are free. An SNS topic would also be free at this volume (1,000 email deliveries and 1M requests per month), but it is only required for `IMMEDIATE` anomaly alerts — `DAILY` and `WEEKLY` take an email address directly, so a topic with one subscriber earns nothing.
+- The Cost Explorer **API** charges $0.01 per request. The console and these resources do not use it; a hand-rolled Lambda polling costs would.
 
 ## Things that bite
 
