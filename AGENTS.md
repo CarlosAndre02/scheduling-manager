@@ -14,7 +14,7 @@ Read the relevant one before changing an area, and update it when a flow changes
 
 - [docs/architecture.md](docs/architecture.md) — layering, request flow, DI, error model, process lifecycle, database design, tooling
 - [docs/api.md](docs/api.md) — setup, running, testing, HTTP contract, migrations in production
-- [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, and the pitfalls found along the way
+- [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail, and the pitfalls found along the way
 - [docs/terraform.md](docs/terraform.md) — the declarative model, state, imports, and how stacks under `infra/terraform/` are run
 
 ## Commands
@@ -49,6 +49,7 @@ Migrations: `npm run drizzle:generate` after editing the schema, then `npm run d
 ## General Rules
 
 - Do not commit or push on your own. Make the changes and stop; commit/push only when the user explicitly asks (never as a "wrap up the task" step).
+- Only read-only commands against external services and infrastructure (`terraform`, `aws`, `supabase`, `vercel` and equivalents). Inspecting is fine — `terraform plan`, `terraform validate`, `aws ... describe`. Never run one that creates, modifies or destroys: `terraform apply`, `terraform destroy`, `terraform import`, any `aws` call that writes. Hand those over; the user runs them and reports back. The local toolchain (npm, jest, eslint, prettier) is not covered by this.
 - Documentation is centralized in docs/; when a flow changes, update /docs. README.md carries only the entry point — why the project exists, requirements, how to run it, how to test it, and the shape of the architecture — and links to /docs for everything else.
 - Documentation never records current state or anything else that ages ("currently", "so far", "previously"). Write the rule or the reason, not the snapshot.
 - Do not assume anything. Always ask when in doubt.

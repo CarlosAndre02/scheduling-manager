@@ -1,0 +1,5 @@
+# Every value has a working default. Copy this file only to override one.
+#
+# region         = "us-east-1"
+# trail_name     = "account-activity"
+# retention_days = 365

@@ -195,6 +195,23 @@ Region choice belongs on this list too. The free tier is region-independent, so 
 - Email subscribers on a budget are free. An SNS topic would also be free at this volume (1,000 email deliveries and 1M requests per month), but it is only required for `IMMEDIATE` anomaly alerts — `DAILY` and `WEEKLY` take an email address directly, so a topic with one subscriber earns nothing.
 - The Cost Explorer **API** charges $0.01 per request. The console and these resources do not use it; a hand-rolled Lambda polling costs would.
 
+## Audit trail
+
+CloudTrail records every call to the AWS API: which identity, which action, when, from which address, with which parameters, and whether it succeeded. The implementation is [infra/terraform/audit](../infra/terraform/audit).
+
+**Logs cannot be created retroactively**, which is the whole argument for enabling it early. Selling software to a company means answering a security questionnaire, and the recurring questions — is administrative access logged, for how long, is the record protected from tampering, can you produce the trail for a given window — are answerable only if the trail was already running. A SOC 2 or ISO 27001 audit samples a period of six to twelve months; "enabled last week" fails it. After a compromise, the same log is what characterizes the incident, and LGPD notification requires characterizing it.
+
+Every account already has **event history**: the last 90 days of management events, free, always on, searchable in the console. A trail is what makes the record outlive that window, span every region in one place, and carry proof of integrity.
+
+**Management events are free; data events are not.** The first copy of management events delivered to S3 costs nothing — only S3 storage is billed, which is pennies for administrative activity. Data events (S3 object access, Lambda invocations) are priced per event and scale with application traffic, so they belong to a decision about observability rather than about audit.
+
+**Governance mode, never compliance mode.** S3 Object Lock is what makes stored logs undeletable, and its compliance mode admits no exception: no principal can delete a locked object before its date, root included, and the only escape is closing the AWS account. Governance mode blocks deletion just as effectively while leaving a permissioned way out. Object Lock also cannot be disabled once enabled, and versioning can no longer be suspended on that bucket.
+
+Two limits worth stating plainly:
+
+- An administrator can still run `StopLogging` or `DeleteTrail`. Object Lock protects what was already written, so the gap is bounded. Closing it entirely means keeping the bucket in a separate account, which requires Organizations.
+- CloudTrail logs the AWS API, not the application. It records that a database was modified, never that a user rescheduled a meeting. Application audit logging is a separate concern.
+
 ## Things that bite
 
 **Enabling Organizations can move the account off the free plan.** The services themselves cost nothing, but the account's free-tier standing is a separate matter. Where credits matter, confirm the billing consequence before enabling. Account and Billing support is free on every plan, including Basic, and is the right channel when a change was unintentional.
