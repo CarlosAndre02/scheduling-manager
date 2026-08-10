@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1
+
+# Kept in step with the "engines" field in package.json. .npmrc sets
+# engine-strict, so a mismatch fails the build here instead of at runtime.
+ARG NODE_VERSION=24
+
+# ── build ─────────────────────────────────────────────────────────────────────
+# Everything needed to compile lives and dies in this stage: TypeScript, jest,
+# eslint, drizzle-kit. None of it reaches the published image.
+FROM node:${NODE_VERSION}-slim AS build
+
+# husky installs git hooks on `npm ci` and there is no .git here. This is the
+# documented way to skip it; --ignore-scripts would also skip dependencies'
+# legitimate install steps.
+ENV HUSKY=0
+
+WORKDIR /app
+
+# Copied before the source so that editing a file does not invalidate the
+# cached dependency layer.
+COPY package.json package-lock.json .npmrc ./
+RUN npm ci
+
+COPY tsconfig.json tsconfig.build.json ./
+COPY scripts ./scripts
+COPY src ./src
+
+# Emits dist/ and copies the migration SQL into it — the migrator reads those
+# files at runtime, and tsc alone would leave them behind.
+RUN npm run build
+
+# Pruning in place reuses the resolution npm already made, instead of a second
+# install that could resolve differently.
+RUN npm prune --omit=dev
+
+# ── runtime ───────────────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-slim AS runtime
+
+# Read by the error handler to decide whether a 500 may carry detail.
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/package.json ./package.json
+
+# The official image ships this unprivileged user. Without it the process runs
+# as root inside the container, and a container escape starts as root.
+USER node
+
+EXPOSE 4000
+
+# Node has global fetch, so checking liveness costs no extra package. /health
+# answers 503 while draining, which is exactly when this should report sick.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.SERVER_PORT||4000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+# Exec form on purpose. In shell form Docker runs `/bin/sh -c ...`, making sh
+# PID 1 and node its grandchild; SIGTERM would reach sh, which does not forward
+# it, so the graceful shutdown in src/index.ts would never run and Docker would
+# SIGKILL the container with requests still in flight.
+CMD ["node", "dist/index.js"]

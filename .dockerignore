@@ -1,0 +1,26 @@
+# Everything not listed here is sent to the Docker daemon as build context.
+# Without this file that includes .env, which would end up baked into an image.
+
+.env
+.env.*
+!.env.example
+
+node_modules
+dist
+coverage
+
+.git
+.github
+.husky
+
+tests
+serverless
+infra
+docs
+
+*.md
+!README.md
+
+.vscode
+.idea
+*.log
