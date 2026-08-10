@@ -29,4 +29,12 @@ export default [
       "@typescript-eslint/no-explicit-any": "off",
     },
   },
+  {
+    // Root config files are CommonJS, where require() is the only way to read
+    // a sibling config.
+    files: ["*.config.js", "*.config.cjs"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
 ];

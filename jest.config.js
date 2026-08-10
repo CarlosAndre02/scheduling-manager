@@ -9,6 +9,8 @@ const config = {
   testEnvironment: "node",
   roots: ["<rootDir>/src", "<rootDir>/tests"],
   testMatch: ["**/__tests__/**/*.ts", "**/?(*.)+(spec|test).ts"],
+  // Image tests need Docker and a built image — see jest.image.config.js.
+  testPathIgnorePatterns: ["/node_modules/", "<rootDir>/tests/image/"],
   transform: {
     "^.+\\.ts$": [
       "ts-jest",

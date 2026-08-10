@@ -15,6 +15,8 @@
     "test": "concurrently -n server,jest --hide server -k -s command-jest \"npm run dev\" \"wait-on http://localhost:4000/health && jest --runInBand --verbose\"",
     "posttest": "npm run services:stop",
     "test:watch": "jest --watchAll --runInBand --verbose",
+    "test:image": "npm run image:build && jest --config jest.image.config.js --runInBand --verbose",
+    "image:build": "docker build -t scheduling-manager:test .",
     "services:up": "docker compose -f infra/docker-compose.yaml up -d --wait",
     "services:stop": "docker compose -f infra/docker-compose.yaml stop",
     "services:down": "docker compose -f infra/docker-compose.yaml down",
