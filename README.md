@@ -8,7 +8,7 @@ The main goal is to close knowledge gaps in AWS and DevOps in general. The appli
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 24 (enforced by `engines` + `engine-strict`)
 - Docker + Docker Compose (Postgres runs in a container)
 
 ## Setup

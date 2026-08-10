@@ -22,6 +22,7 @@ Read the relevant one before changing an area, and update it when a flow changes
 ```bash
 npm run dev            # docker down → up → db:migrate → nodemon src/index.ts (port 4000)
 npm test               # brings up the server + Postgres, runs jest --runInBand, stops docker
+npm run test:image     # builds the image and asserts its contents + SIGTERM drain (needs Docker)
 npm run build          # tsc → dist/ + copies the migration SQL into dist/
 npm run lint:check     # eslint
 npm run prettier:fix   # format

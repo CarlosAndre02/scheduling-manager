@@ -4,7 +4,7 @@ How to get the Scheduling Manager API running locally and how to exercise it, bo
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 24 (pinned by `engines`; `.npmrc` sets `engine-strict`, so another major fails the install rather than warning)
 - Docker + Docker Compose (Postgres runs in a container)
 
 ## Setup
@@ -20,12 +20,15 @@ cp .env.example .env
 | ----------------------------------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `NODE_ENV`                                            | `development`                                                              | enables Drizzle query logging when not `production`                         |
 | `SERVER_PORT`                                         | `4000`                                                                     | Express                                                                     |
+| `TRUSTED_PROXY_HOPS`                                  | `0` locally, `1` behind one proxy                                          | how far into `X-Forwarded-For` Express looks to resolve `req.ip`            |
 | `POSTGRES_HOST` / `POSTGRES_PORT`                     | `localhost` / `5432`                                                       | Postgres container                                                          |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `local_user` / `local_password` / `scheduling_manager`                     | Postgres container                                                          |
 | `DATABASE_URL`                                        | `postgresql://local_user:local_password@localhost:5432/scheduling_manager` | Drizzle (app + migrations)                                                  |
 | `DATABASE_POOL_MAX`                                   | `10`                                                                       | connection pool ceiling **per container**                                   |
 | `SHUTDOWN_DRAIN_DELAY_MS`                             | `0` locally, `5000`+ behind a load balancer                                | how long `/health` reports unhealthy before connections stop being accepted |
 | `SHUTDOWN_TIMEOUT_MS`                                 | `15000`                                                                    | grace period for in-flight requests before sockets are forced closed        |
+
+**`TRUSTED_PROXY_HOPS` counts the proxies that append `X-Forwarded-For`, not the network hops.** Traefik, Caddy, an ALB and CloudFront all append it by default; nginx appends nothing unless configured with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`. A bare `proxy_pass` therefore stays at `0`. See [architecture.md](architecture.md#input) for why over-counting is worse than under-counting.
 
 ## Running
 
@@ -51,11 +54,46 @@ npm run drizzle:studio   # browse the database
 
 Production-ish run: `npm run build && npm start` (serves `dist/`; migrations are a separate step, see below).
 
+### Container image
+
+```bash
+docker build -t scheduling-manager:$(git rev-parse --short HEAD) .
+docker run --rm -p 4000:4000 --env-file .env scheduling-manager:<tag>
+```
+
+Tag by commit SHA, never `latest`: a rollback needs a target that does not move.
+
+The [Dockerfile](../Dockerfile) is multi-stage. The build stage installs every dependency and runs `npm run build`; the runtime stage starts from a clean base and copies only `dist/`, the pruned `node_modules` and `package.json`. TypeScript, jest, eslint and the source itself never reach the published image — smaller to pull, and far less for a scanner or an intruder to find.
+
+Four details the image depends on:
+
+- **`CMD` is exec form.** Shell form would put `/bin/sh` at PID 1 with Node as its grandchild, and `sh` does not forward `SIGTERM` — the drain below would never run and the container would be `SIGKILL`ed with requests in flight.
+- **`HUSKY=0` during the build.** `npm ci` triggers the `prepare` script, and husky has no `.git` to install hooks into.
+- **The process runs as the unprivileged `node` user**, so a container escape does not begin as root.
+- **`.dockerignore` excludes `.env`.** Without it the build context carries the file straight into the image.
+
+`npm run build` also copies the migration SQL into `dist/`, so the image can run its own migrations — see below.
+
+Two behaviours that read as functional and are not:
+
+- **`EXPOSE` publishes nothing.** It is metadata: `docker run -P` and Traefik's port discovery read it, nothing else. What decides the listening port is `SERVER_PORT`. Because one is build-time and the other run-time, they cannot be kept in sync — so leave `SERVER_PORT` at its default inside the container and choose where it appears from the host (`-p 8080:4000`).
+- **`HEALTHCHECK` does not restart anything.** Docker only flips the container's status; reacting is the orchestrator's job. With a plain `docker run`, an unhealthy container keeps running.
+
 ### Shutdown
 
 On `SIGTERM`/`SIGINT` the server drains instead of dying: `/health` starts answering `503`, and only after `SHUTDOWN_DRAIN_DELAY_MS` does it stop accepting connections. That window is what lets a load balancer deregister the instance before its in-flight requests are cut. In-flight work then gets up to `SHUTDOWN_TIMEOUT_MS` to finish before sockets are forced closed, and the connection pool is closed last.
 
 This only works if the Node process actually receives the signal — in a container that means an exec-form `CMD` (or `docker run --init`), so Node is PID 1.
+
+**Whoever stops the container has to allow enough time.** `docker stop` sends `SIGTERM` and follows it with `SIGKILL` after 10 seconds by default, while a full drain takes up to `SHUTDOWN_DRAIN_DELAY_MS + SHUTDOWN_TIMEOUT_MS` — 20 seconds with the values above. The default kills the process mid-drain, cutting exactly the requests the drain exists to protect. The grace period lives with the caller, not in the image:
+
+| Where               | Setting                  |
+| ------------------- | ------------------------ |
+| `docker stop`       | `-t 30`                  |
+| Compose             | `stop_grace_period: 30s` |
+| ECS task definition | `stopTimeout: 30`        |
+
+Keep it above the sum, not equal to it.
 
 ### Schema changes
 
@@ -263,6 +301,58 @@ const meeting = await storeMeeting(createMeeting(user.id));
 ```
 
 `createUser()` returns a fixed name/email pair, so tests that need two distinct users must override the email themselves.
+
+### Image tests
+
+```bash
+npm run test:image
+```
+
+Builds the image and asserts what only the image can answer: that it runs as a non-root user, carries `dist/` without the sources, prunes development dependencies while keeping runtime ones, ships every migration `dist/` will be asked for, runs `node` as PID 1, and drains correctly on `SIGTERM`.
+
+They are deliberately outside `npm test` — they need Docker and a built image, and they measure in seconds. `jest.config.js` excludes `tests/image/`; [jest.image.config.js](../jest.image.config.js) runs it. CI points `IMAGE_TAG` at the image it already built and skips the local build step.
+
+The drain test is here rather than in the integration suite because draining is terminal: `markShuttingDown()` is a one-way flag, so exercising it needs a process of its own, which is what a container is.
+
+## Dependencies and vulnerabilities
+
+### Reading an audit
+
+```bash
+npm audit --omit=dev   # what actually ships
+npm audit              # everything, build tooling included
+```
+
+**`--omit=dev` is the number that matters.** Development dependencies never reach the runtime image, so a critical advisory in a test framework is a very different problem from a moderate one in the ORM. Fix the first list before worrying about the second.
+
+An advisory names a **code path**, not just a package. `uuid`'s buffer bounds check applies to `v3`/`v5`/`v6` when a `buf` argument is passed; code calling `v4` without one is unaffected. Read the advisory before treating a version number as a verdict — and record the reasoning if you decide not to upgrade, because the next person will ask again.
+
+### Applying a fix
+
+| Command                        | What it does                                 | When                                         |
+| ------------------------------ | -------------------------------------------- | -------------------------------------------- |
+| `npm audit fix`                | upgrades within the ranges in `package.json` | always safe to try first                     |
+| `npm install <pkg>@^<version>` | raises the range explicitly                  | a major bump, or to encode a security floor  |
+| `npm audit fix --force`        | ignores ranges, may downgrade                | never unattended — it decides majors for you |
+
+Prefer the explicit install over `--force`: it names the intent in `package.json` and leaves an honest diff. Packages that move together move together — `drizzle-orm` and `drizzle-kit` share a release cadence, so bumping one alone invites a generator that disagrees with the runtime.
+
+### Upgrading safely
+
+The lockfile is the contract. It is committed, and `npm ci` installs it exactly, so CI and the image resolve the same tree the author tested. Nothing else in this list works without that.
+
+After any dependency change, in order — each step catches something the previous one cannot:
+
+```bash
+npx tsc --noEmit         # type-level breakage
+npm test                 # behaviour, against a real database
+npm run test:image       # the image still assembles and shuts down cleanly
+npm run drizzle:generate # must report no schema changes after a drizzle bump
+```
+
+That last one is specific to the ORM: a generator upgrade that starts emitting different DDL for the same schema shows up as a spurious migration, and finding that at deploy time is expensive.
+
+The Node major is pinned by `engines` and enforced by `engine-strict` in `.npmrc`, so a dependency requiring a newer runtime fails at install rather than in production.
 
 ### Troubleshooting
 

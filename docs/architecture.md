@@ -49,6 +49,8 @@ Two layers, split by what they know about:
 | Controller | shape: presence, type, uuid format, trimming | `hostId` exists and is a uuid |
 | Entity     | content: lengths, dates, URLs, no markup     | `name` is 3–50 chars          |
 
+`req.ip` is the other raw request value, and it lies by default behind a proxy: the socket address belongs to the load balancer, so every client looks like the same caller. `trust proxy` is set from `TRUSTED_PROXY_HOPS` to say how far into `X-Forwarded-For` to look. The count must match the topology exactly — trusting every proxy lets a client send its own `X-Forwarded-For` and claim any address, which is worse than trusting none.
+
 `RequestInput` is the only place allowed to read a raw `req.body`/`req.params` value. Reaching for `.trim()` on a field that was never sent throws a `TypeError`, which the error handler can only report as an opaque `500` — a client mistake logged as an internal failure.
 
 **Input is rejected, never rewritten.** Running free text through an HTML sanitizer corrupts it — `<` in ordinary prose (`Ana <3 Bob`) comes back escaped — while still admitting the markup a sanitizer considers safe. Since the API answers JSON, which browsers do not execute, escaping belongs to the consumer at render time; anything containing a tag is refused with a `400` instead of being silently mutated.
