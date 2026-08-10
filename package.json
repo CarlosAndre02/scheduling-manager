@@ -5,6 +5,9 @@
   "author": "Carlos André",
   "license": "MIT",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/copy-migrations.mjs",
     "start": "node dist/index.js",
