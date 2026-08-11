@@ -22,9 +22,7 @@ const config = {
         },
       },
     ],
-    "^.+\\.js$": "babel-jest",
   },
-  transformIgnorePatterns: ["node_modules/(?!@faker-js)"],
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   coverageProvider: "v8",
   collectCoverageFrom: [
