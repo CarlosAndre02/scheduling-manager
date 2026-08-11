@@ -43,6 +43,18 @@ describe("Image contents", () => {
     }
   });
 
+  // npm's own bundled dependencies carry advisories that a scanner counts
+  // against this image, and nothing at runtime loads them.
+  it("Should not ship a package manager it never runs", async () => {
+    const binaries = (await inspectImage(["ls", "-1", "/usr/local/bin"])).split(
+      "\n",
+    );
+
+    expect(binaries).toContain("node");
+    expect(binaries).not.toContain("npm");
+    expect(binaries).not.toContain("npx");
+  });
+
   // tsc emits no .sql, so the migration files reach dist/ only through
   // scripts/copy-migrations.mjs. A break there surfaces at deploy time.
   it("Should ship every migration the runtime migrator looks for", async () => {

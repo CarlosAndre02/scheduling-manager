@@ -45,6 +45,12 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
 
+# The application runs `node`, never `npm`. Keeping npm here ships its own
+# bundled dependencies, whose advisories are counted against this image even
+# though nothing loads them, and hands anyone who gets a shell a package
+# installer. Migrations invoke the compiled migrator directly instead.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 # The official image ships this unprivileged user. Without it the process runs
 # as root inside the container, and a container escape starts as root.
 USER node
@@ -53,8 +59,11 @@ EXPOSE 4000
 
 # Node has global fetch, so checking liveness costs no extra package. /health
 # answers 503 while draining, which is exactly when this should report sick.
+#
+# Exec form here too: shell form would spawn a /bin/sh for every check, every
+# interval, for the life of the container.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.SERVER_PORT||4000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.SERVER_PORT||4000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
 # Exec form on purpose. In shell form Docker runs `/bin/sh -c ...`, making sh
 # PID 1 and node its grandchild; SIGTERM would reach sh, which does not forward

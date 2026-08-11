@@ -66,12 +66,13 @@ Tag by commit SHA, never `latest`: a rollback needs a target that does not move.
 
 The [Dockerfile](../Dockerfile) is multi-stage. The build stage installs every dependency and runs `npm run build`; the runtime stage starts from a clean base and copies only `dist/`, the pruned `node_modules` and `package.json`. TypeScript, jest, eslint and the source itself never reach the published image — smaller to pull, and far less for a scanner or an intruder to find.
 
-Four details the image depends on:
+Five details the image depends on:
 
 - **`CMD` is exec form.** Shell form would put `/bin/sh` at PID 1 with Node as its grandchild, and `sh` does not forward `SIGTERM` — the drain below would never run and the container would be `SIGKILL`ed with requests in flight.
 - **`HUSKY=0` during the build.** `npm ci` triggers the `prepare` script, and husky has no `.git` to install hooks into.
 - **The process runs as the unprivileged `node` user**, so a container escape does not begin as root.
 - **`.dockerignore` excludes `.env`.** Without it the build context carries the file straight into the image.
+- **npm is removed from the runtime stage.** Nothing at runtime uses it, and its own bundled dependencies carry advisories that a scanner counts against the image regardless. It also stops a shell in the container from being a package installer. The consequence is that anything invoking the image runs `node` directly, migrations included.
 
 `npm run build` also copies the migration SQL into `dist/`, so the image can run its own migrations — see below.
 
@@ -114,8 +115,10 @@ npm run db:migrate         # applies it
 Run migrations as a **one-shot container from the image being deployed**, inside the VPC (the database is not publicly reachable), before restarting the app containers:
 
 ```bash
-docker run --rm --env-file /etc/app.env <image>:<sha> npm run db:migrate:prod
+docker run --rm --env-file /etc/app.env <image>:<sha> node dist/shared/database/migrate.js
 ```
+
+The compiled migrator is invoked directly rather than through `npm run db:migrate:prod`, because the image carries no package manager — see above.
 
 Because the migration ships in the same image as the code, the two can never drift apart. `npm run build` copies the SQL files into `dist/` (via [scripts/copy-migrations.mjs](../scripts/copy-migrations.mjs)) — `tsc` alone would not.
 
