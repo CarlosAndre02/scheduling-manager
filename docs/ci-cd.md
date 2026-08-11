@@ -43,13 +43,15 @@ Actions are referenced by tag. A tag is mutable: whoever owns the action can rep
 | ---------------- | --------------------------------------------------------------- |
 | `npm`            | project dependencies                                            |
 | `github-actions` | the actions above, whose tags this file's own advice depends on |
-| `docker`         | the base image, which is where an image-scan finding gets fixed |
+| `docker`         | the base image's tag, when a new major appears                  |
 
 Minor and patch updates arrive grouped into one pull request, production and development separately. Majors come individually: burying a breaking change inside a batch is how it gets merged unread.
 
 The two mechanisms play different roles and need each other. Dependabot is the flow — updates arrive as pull requests the pipeline validates. `npm audit` in CI is the barrier — nothing merges with a high-severity advisory in what ships. The barrier is set high precisely so it does not fight the flow.
 
 `serverless/` is deliberately not watched: it shares no code with `src/` and is not deployed, so updates there would be noise.
+
+**The `docker` ecosystem tracks tags, not digests.** `node:24-slim` is a rolling tag, so a patched base image arrives as a new digest under the same name and produces no pull request. What picks it up is the image job rebuilding on every push. Dependabot would only speak up when a new major appears, which is a decision rather than a patch. Pinning the base by digest would change that, at the cost of a pull request for every upstream rebuild.
 
 ## Branch protection
 

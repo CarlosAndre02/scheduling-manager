@@ -20,9 +20,9 @@ jobs:
     name: Types, lint, format, advisories
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Reads engines.node from package.json, so the version used here
           # cannot drift from the one the project pins.
@@ -45,9 +45,9 @@ jobs:
     name: Integration tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: package.json
           cache: npm
@@ -67,9 +67,9 @@ jobs:
     name: Dockerfile lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: hadolint/hadolint-action@v3.1.0
+      - uses: hadolint/hadolint-action@v3.4.0
         with:
           dockerfile: Dockerfile
           # Info-level findings are advice about layer count, which applies to
@@ -82,9 +82,9 @@ jobs:
     name: Image build, scan and tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: package.json
           cache: npm
@@ -100,9 +100,9 @@ jobs:
       #
       # ignore-unfixed is what keeps the job usable: every base image carries
       # advisories with no fix released, and a job that is permanently red gets
-      # switched off. Failing only on what is fixable means the fix is always
-      # "update the base image", which Dependabot already offers.
-      - uses: aquasecurity/trivy-action@0.28.0
+      # switched off. What remains is fixable, and for the base layer the fix
+      # is a rebuild — this job builds fresh every run, so it self-heals.
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: scheduling-manager:${{ github.sha }}
           severity: HIGH,CRITICAL
