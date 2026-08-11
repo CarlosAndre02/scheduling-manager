@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The default token can write to almost everything in the repository. Nothing
+# here needs more than reading it.
+permissions:
+  contents: read
+
+# A newer push makes the previous run's answer irrelevant before it finishes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Types, lint, format, advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Reads engines.node from package.json, so the version used here
+          # cannot drift from the one the project pins.
+          node-version-file: package.json
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx tsc --noEmit
+      - run: npm run lint:check
+      - run: npm run prettier:check
+
+      # Only what ships, and only what is worth blocking a merge over. An
+      # advisory published against a dependency nobody touched would otherwise
+      # fail an unrelated change, and a pipeline that fails for unrelated
+      # reasons stops being read.
+      - run: npm audit --omit=dev --audit-level=high
+
+  test:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: npm
+
+      - run: npm ci
+
+      # docker-compose and the application read the same file, so this also
+      # fails when a new variable is added without reaching .env.example.
+      - run: cp .env.example .env
+
+      # The developer's own command, deliberately. A service container here
+      # would be a second definition of the database to drift from the compose
+      # file, against the parity this project is built around.
+      - run: npm test
+
+  dockerfile:
+    name: Dockerfile lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          # Info-level findings are advice about layer count, which applies to
+          # the published image. Our extra layers live in the build stage, and
+          # that stage is discarded — following the rule there would be
+          # cargo-culting it past its own rationale.
+          failure-threshold: warning
+
+  image:
+    name: Image build, scan and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: npm
+
+      - run: npm ci
+
+      # Tagged by commit, so the scan and the tests below examine the exact
+      # image a deploy would ship rather than a rebuild of it.
+      - run: docker build -t scheduling-manager:${{ github.sha }} .
+
+      # `npm audit` sees npm packages. The image is also a Debian install whose
+      # CVEs are invisible to it, which is the gap this closes.
+      #
+      # ignore-unfixed is what keeps the job usable: every base image carries
+      # advisories with no fix released, and a job that is permanently red gets
+      # switched off. Failing only on what is fixable means the fix is always
+      # "update the base image", which Dependabot already offers.
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: scheduling-manager:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - run: npx jest --config jest.image.config.js --runInBand
+        env:
+          IMAGE_TAG: scheduling-manager:${{ github.sha }}

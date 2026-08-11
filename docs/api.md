@@ -1,6 +1,6 @@
 # API — Running and Testing
 
-How to get the Scheduling Manager API running locally and how to exercise it, both by hand and through the test suite. For how the code is organized, see [architecture.md](architecture.md).
+How to get the Scheduling Manager API running locally and how to exercise it, both by hand and through the test suite. For how the code is organized, see [architecture.md](architecture.md); for what runs on every push, see [ci-cd.md](ci-cd.md).
 
 ## Requirements
 

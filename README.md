@@ -72,5 +72,6 @@ Use cases depend on repository _interfaces_, never on Drizzle, so the domain has
 
 - [docs/architecture.md](docs/architecture.md) — layering, DI, error model, process lifecycle, database design
 - [docs/api.md](docs/api.md) — HTTP contract, environment variables, migrations, deployment notes
+- [docs/ci-cd.md](docs/ci-cd.md) — the pipeline: what runs on every push and why
 - [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail
 - [docs/terraform.md](docs/terraform.md) — declarative model, state, imports; stacks live in [infra/terraform/](infra/terraform/)

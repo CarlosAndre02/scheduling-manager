@@ -1,0 +1,36 @@
+version: 2
+
+updates:
+  # Grouped so a quiet week arrives as one pull request instead of a dozen.
+  # Majors stay ungrouped on purpose: each one needs its own reading, and
+  # burying a breaking change inside a batch is how it gets merged unread.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      production:
+        dependency-type: production
+        update-types: [minor, patch]
+      development:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  # Actions are referenced by tag, which is mutable — whoever owns the action
+  # can repoint it. Keeping them current is what makes moving to SHA pinning
+  # maintainable once these jobs handle deploy credentials.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # The Dockerfile's base image. `npm audit` cannot see the Debian install
+  # inside the image, so this is how the operating system layer stays patched.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
