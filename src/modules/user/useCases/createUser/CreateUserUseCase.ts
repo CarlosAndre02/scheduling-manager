@@ -8,9 +8,10 @@ type CreateUserResponse = {
   message: string;
 };
 
-export class CreateUserUseCase
-  implements UseCase<CreateUserDTO, CreateUserResponse>
-{
+export class CreateUserUseCase implements UseCase<
+  CreateUserDTO,
+  CreateUserResponse
+> {
   private userRepo: IUserRepo;
 
   constructor(userRepo: IUserRepo) {

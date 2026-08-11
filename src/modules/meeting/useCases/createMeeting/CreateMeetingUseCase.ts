@@ -10,9 +10,10 @@ type CreateMeetingResponse = {
   message: string;
 };
 
-export class CreateMeetingUseCase
-  implements UseCase<CreateMeetingDTO, CreateMeetingResponse>
-{
+export class CreateMeetingUseCase implements UseCase<
+  CreateMeetingDTO,
+  CreateMeetingResponse
+> {
   private meetingRepo: IMeetingRepo;
   private userRepo: UserRepo;
 

@@ -11,9 +11,10 @@ type CreateSchedulingResponse = {
   message: string;
 };
 
-export class CreateSchedulingUseCase
-  implements UseCase<CreateSchedulingDTO, CreateSchedulingResponse>
-{
+export class CreateSchedulingUseCase implements UseCase<
+  CreateSchedulingDTO,
+  CreateSchedulingResponse
+> {
   private schedulingRepo: ISchedulingRepo;
   private userRepo: UserRepo;
   private meetingRepo: MeetingRepo;

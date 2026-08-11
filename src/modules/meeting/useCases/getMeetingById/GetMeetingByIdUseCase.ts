@@ -3,9 +3,10 @@ import { Meeting } from "../../domain/Meeting";
 import { IMeetingRepo } from "../../repositories/IMeetingRepo";
 import { GetMeetingByIdDTO } from "./GetMeetingByIdDTO";
 
-export class GetMeetingByIdUseCase
-  implements UseCase<GetMeetingByIdDTO, Meeting>
-{
+export class GetMeetingByIdUseCase implements UseCase<
+  GetMeetingByIdDTO,
+  Meeting
+> {
   private meetingRepo: IMeetingRepo;
 
   constructor(meetingRepo: IMeetingRepo) {

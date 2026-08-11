@@ -4,9 +4,10 @@ import { IMeetingRepo } from "../../repositories/IMeetingRepo";
 import { GetMeetingsByUserIdDTO } from "./GetMeetingsByUserIdDTO";
 import { UserRepo } from "../../../user/repositories/drizzle/UserRepo";
 
-export class GetMeetingsByUserIdUseCase
-  implements UseCase<GetMeetingsByUserIdDTO, Meeting[]>
-{
+export class GetMeetingsByUserIdUseCase implements UseCase<
+  GetMeetingsByUserIdDTO,
+  Meeting[]
+> {
   private meetingRepo: IMeetingRepo;
   private userRepo: UserRepo;
 

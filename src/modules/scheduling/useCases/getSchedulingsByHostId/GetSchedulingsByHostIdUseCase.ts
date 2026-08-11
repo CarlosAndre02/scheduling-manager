@@ -4,9 +4,10 @@ import { ISchedulingRepo } from "../../repositories/ISchedulingRepo";
 import { GetSchedulingsByHostIdDTO } from "./GetSchedulingsByHostIdDTO";
 import { UserRepo } from "../../../user/repositories/drizzle/UserRepo";
 
-export class GetSchedulingsByHostIdUseCase
-  implements UseCase<GetSchedulingsByHostIdDTO, Scheduling[]>
-{
+export class GetSchedulingsByHostIdUseCase implements UseCase<
+  GetSchedulingsByHostIdDTO,
+  Scheduling[]
+> {
   private schedulingRepo: ISchedulingRepo;
   private userRepo: UserRepo;
 
