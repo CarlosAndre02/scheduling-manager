@@ -1,4 +1,6 @@
+import cors from "cors";
 import express, { Request, Response } from "express";
+import helmet from "helmet";
 
 import { userRouter } from "./modules/user/routes";
 import { meetingRouter } from "./modules/meeting/routes";
@@ -23,7 +25,31 @@ const BODY_LIMIT = "10kb";
 // the client — correct for local development, wrong the moment a proxy exists.
 const TRUSTED_PROXY_HOPS = Number(process.env.TRUSTED_PROXY_HOPS ?? 0);
 
+// CORS is enforced by the browser, not here: it decides which origins may
+// *read* a response. curl and any server-to-server caller ignore it, so it
+// protects a logged-in visitor from a hostile page — never the API itself.
+//
+// Sending no CORS header is the safe default, because a browser then refuses
+// the cross-origin read. The middleware is mounted only once an origin is
+// declared, and always as an explicit list: reflecting whatever origin asked
+// (`origin: true`) removes the protection entirely, and paired with credentials
+// would let any site read authenticated responses using the visitor's session.
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 app.set("trust proxy", TRUSTED_PROXY_HOPS);
+
+// Before the body parsers, so a response they reject on their own — a body over
+// the limit, malformed JSON — carries the headers too.
+app.use(helmet());
+
+if (ALLOWED_ORIGINS.length > 0) {
+  // Caching the preflight stops the browser re-asking before every non-simple
+  // request. Credentials stay off: there is no cookie to send.
+  app.use(cors({ origin: ALLOWED_ORIGINS, maxAge: 86_400 }));
+}
 
 app.use(express.json({ limit: BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));

@@ -21,6 +21,7 @@ cp .env.example .env
 | `NODE_ENV`                                            | `development`                                                              | enables Drizzle query logging when not `production`                         |
 | `SERVER_PORT`                                         | `4000`                                                                     | Express                                                                     |
 | `TRUSTED_PROXY_HOPS`                                  | `0` locally, `1` behind one proxy                                          | how far into `X-Forwarded-For` Express looks to resolve `req.ip`            |
+| `CORS_ORIGINS`                                        | empty                                                                      | comma-separated origins allowed to read responses from a browser            |
 | `POSTGRES_HOST` / `POSTGRES_PORT`                     | `localhost` / `5432`                                                       | Postgres container                                                          |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `local_user` / `local_password` / `scheduling_manager`                     | Postgres container                                                          |
 | `DATABASE_URL`                                        | `postgresql://local_user:local_password@localhost:5432/scheduling_manager` | Drizzle (app + migrations)                                                  |
@@ -221,6 +222,22 @@ Consequences worth knowing:
 - **`conferenceLink` must carry an `http`/`https` protocol** and may not point at loopback, private or link-local addresses — `meet.example.com` and `http://169.254.169.254/…` are both rejected.
 - **Bodies are capped at 10kb**, answering `413` beyond that.
 
+### Security headers and CORS
+
+`helmet()` runs ahead of the body parsers, so the headers reach responses those parsers produce on their own — a `413`, a malformed body — not only responses from a route.
+
+Its defaults are kept whole rather than trimmed to the few that act on JSON. `X-Content-Type-Options: nosniff` and `Strict-Transport-Security` do real work here; `Content-Security-Policy` and `X-Frame-Options` govern how a browser renders HTML, which this API never returns. They stay because picking a subset means re-auditing the choice on every helmet release, and because scanners and security questionnaires ask for them by name.
+
+The cost is honest: about 660 bytes of headers on every response, roughly 250 of them CSP. Over HTTP/2 the repetition mostly disappears into header compression, but on a small JSON payload the first response of a connection carries more header than body. If that ever matters, `helmet({ contentSecurityPolicy: false })` is the one worth reconsidering.
+
+`Strict-Transport-Security` defaults to one year with `includeSubDomains`. On `api.example.com` that only reaches that host's own subdomains; served from an apex domain it would force HTTPS on every sibling subdomain, including ones you do not control.
+
+**CORS is enforced by the browser, not by the server.** It decides which origins may _read_ a response — `curl` and any server-to-server caller ignore it entirely, so it is never an access control. What it protects is a logged-in visitor whose browser is pointed at a hostile page.
+
+No origin is sent by default, which is what makes a browser refuse a cross-origin read, so the middleware mounts only once `CORS_ORIGINS` lists something. The list is explicit and never reflective: `origin: true` echoes whatever origin asked, which looks like working CORS while granting every site the access the list was meant to restrict. Credentials stay off — there is no cookie to send — and turning them on alongside a reflected origin is the combination that lets any page read authenticated responses.
+
+The `cors` middleware also sets `Vary: Origin`, without which a shared cache could hand a response authorised for one origin to another.
+
 ### Validation rules worth knowing
 
 Hit while creating a **user**: `name` 3–50 chars, valid `email`, email must not already exist.
@@ -314,6 +331,12 @@ They are deliberately outside `npm test` — they need Docker and a built image,
 
 The drain test is here rather than in the integration suite because draining is terminal: `markShuttingDown()` is a one-way flag, so exercising it needs a process of its own, which is what a container is.
 
+### Troubleshooting
+
+- **`wait-on` times out / `ECONNREFUSED`** — port `4000` is taken, or Postgres did not become healthy. Check `docker ps` and `docker logs postgres-dev`.
+- **Migration errors on `npm run dev`** — the volume holds an older schema. `npm run services:down && docker volume rm infra_pg_data` then start again.
+- **Tests fail with unique-constraint errors** — a previous run left rows behind; `clearDatabase()` only runs inside the suite, so re-run `npm test` or truncate manually.
+
 ## Dependencies and vulnerabilities
 
 ### Reading an audit
@@ -353,9 +376,3 @@ npm run drizzle:generate # must report no schema changes after a drizzle bump
 That last one is specific to the ORM: a generator upgrade that starts emitting different DDL for the same schema shows up as a spurious migration, and finding that at deploy time is expensive.
 
 The Node major is pinned by `engines` and enforced by `engine-strict` in `.npmrc`, so a dependency requiring a newer runtime fails at install rather than in production.
-
-### Troubleshooting
-
-- **`wait-on` times out / `ECONNREFUSED`** — port `4000` is taken, or Postgres did not become healthy. Check `docker ps` and `docker logs postgres-dev`.
-- **Migration errors on `npm run dev`** — the volume holds an older schema. `npm run services:down && docker volume rm infra_pg_data` then start again.
-- **Tests fail with unique-constraint errors** — a previous run left rows behind; `clearDatabase()` only runs inside the suite, so re-run `npm test` or truncate manually.
