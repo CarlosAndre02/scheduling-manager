@@ -35,6 +35,42 @@ Actions are referenced by tag. A tag is mutable: whoever owns the action can rep
 
 `concurrency` with `cancel-in-progress` drops a run whose answer a newer push already invalidated.
 
+## Authenticating to AWS
+
+A workflow that deploys needs AWS credentials, and there are two ways to give it some. The difference is not convenience — it is whether a credential capable of reaching the account exists at rest anywhere.
+
+**Not an IAM user.** The classic approach creates an IAM user, generates an access key, and stores it in repository secrets. That key never expires. It stays valid until someone remembers to rotate it, it is readable by every workflow in the repository, and it survives being copied — out of a log with incomplete masking, out of a compromised third-party action, out of a fork of the configuration. Rotation shortens the window; it does not remove the object being protected.
+
+**GitHub OIDC** removes it. The account trusts GitHub's OIDC issuer as an identity provider, and the workflow exchanges a short-lived signed token for temporary credentials via `sts:AssumeRoleWithWebIdentity`:
+
+1. the job requests `permissions: id-token: write` and receives a JWT from GitHub describing the repository, the branch and the event that triggered it,
+2. `aws-actions/configure-aws-credentials` presents that token to STS,
+3. AWS verifies the signature against the registered provider and checks the role's trust policy,
+4. the job receives credentials that expire within the hour.
+
+Nothing is stored, so nothing can leak from storage, and a token that escapes is worthless in an hour.
+
+**The whole guarantee lives in the trust policy's conditions**, and a wrong one silently gives it away:
+
+```hcl
+condition {
+  test     = "StringEquals"
+  variable = "token.actions.githubusercontent.com:sub"
+  values   = ["repo:<owner>/<repo>:ref:refs/heads/main"]
+}
+condition {
+  test     = "StringEquals"
+  variable = "token.actions.githubusercontent.com:aud"
+  values   = ["sts.amazonaws.com"]
+}
+```
+
+The `sub` claim binds the role to one repository **and** one branch — a fork, a pull request from a fork, or a different repository under the same owner all present a different `sub` and are refused. Two mistakes undo this: writing the condition with `StringLike` and a wildcard such as `repo:<owner>/*`, which admits every repository the owner will ever create, and omitting `aud`, which leaves the policy open to tokens issued for another audience.
+
+Binding `sub` to a GitHub **environment** (`repo:<owner>/<repo>:environment:production`) rather than a branch is the stronger form, because an environment can require a manual approval before the job starts — the deploy then cannot happen without a human, enforced on GitHub's side before a token is ever issued.
+
+The role's permissions are a separate question from its trust policy, and both need to be narrow: a deploy role needs push access to one ECR repository and whatever triggers the rollout, not the ability to read the account.
+
 ## Dependabot
 
 [.github/dependabot.yml](../.github/dependabot.yml) watches three ecosystems weekly:
