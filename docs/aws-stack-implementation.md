@@ -18,29 +18,41 @@ The consequence to internalize: a single monolithic state makes the most dangero
 | `bootstrap` | the S3 bucket holding every other stack's state               | never   | every other stack forgets what it created       |
 | `network`   | VPC, subnets, route tables, internet gateway, security groups | rarely  | everything running inside it goes down          |
 | `delivery`  | ECR repository, GitHub OIDC provider, the CI role             | rarely  | deploys break; what is already running does not |
-| `compute`   | RDS, EC2, the reverse proxy, DNS records                      | often   | the application goes down                       |
+| `database`  | RDS and its subnet group                                      | rarely  | the data is gone                                |
+| `compute`   | EC2, the reverse proxy, DNS records                           | often   | the application goes down                       |
 
 `billing` and `audit` already exist alongside these and follow the same rule: separate concerns, separate state, each with its own runbook.
 
-`delivery` sits apart from `compute` on purpose. It is the only stack a compromised CI credential can reach, and keeping the database out of that boundary is worth a directory.
+Workloads live in `us-east-1`. The latency difference from Brazil is 100 ms or so against São Paulo, which does not matter for an API answering JSON, while the cost difference is 50–65% on compute and larger on data transfer — see [aws-governance.md](aws-governance.md).
+
+`delivery` sits apart on purpose. It is the only stack a compromised CI credential can reach, and keeping the database outside that boundary is worth a directory.
+
+**`database` sits apart from `compute` for the same reason the split exists at all.** The instance is meant to be disposable — recreated from an image tag whenever anything changes — and the database is the one thing in the system that cannot be rebuilt from the repository. Sharing a state file would put both in the same plan, so the routine operation of replacing a server would be the operation that can also propose replacing the database. Deletion protection and `prevent_destroy` guard the resource; separate state means the question is never asked.
 
 `network` lays out two public and two private subnets across two AZs regardless of how many are occupied, because empty subnets are free and the resources that demand a second AZ demand it at creation. The reasoning is in [vpc.md](vpc.md).
 
 ### What survives a change of runtime
 
-`compute` is the stack expected to be rewritten — from an instance running the image to an ECS service running the same image behind a load balancer. The split is drawn so that this rewrite stays contained:
+`compute` is the stack expected to be rewritten — from an instance running the image to an ECS service running the same image behind a load balancer. Every other stack survives it:
 
-| Stays as it is                            | Is replaced       |
-| ----------------------------------------- | ----------------- |
-| VPC, subnets, route tables                | the instance      |
-| the existing security group rules         | the reverse proxy |
-| ECR repository and image tags             |                   |
-| the OIDC provider and the CI role's trust |                   |
-| RDS and its subnet group                  |                   |
+| Stack      | Under the rewrite                                               |
+| ---------- | --------------------------------------------------------------- |
+| `network`  | gains one security group for the load balancer; nothing changes |
+| `delivery` | untouched — the same repository, the same image, the same role  |
+| `database` | untouched — the endpoint the application connects to is a name  |
+| `compute`  | replaced                                                        |
 
-The security group rules survive because they name groups rather than addresses, so tasks with ephemeral addresses are already covered by rules written for an instance. The chain does gain a link — a group for the load balancer, added in front — and that is an addition to `network` rather than an edit to what it already holds.
+The security group rules survive because they name groups rather than addresses, so tasks with ephemeral addresses are already covered by rules written for an instance. The chain gains a link — a group for the load balancer, added in front — and that is an addition to `network` rather than an edit to what it already holds.
 
-Splitting the runtime away from the network is what keeps that true. If one stack owned both, the plan that introduces the load balancer would also be the plan that can replace the VPC.
+The split is what keeps this true. If one stack owned all of it, the plan that introduces the load balancer would also be the plan that can replace the VPC and the database.
+
+### Keeping `compute` disposable
+
+The point of the split is only real if nothing irreplaceable accumulates on the instance. Three things try to:
+
+- **ACME certificate storage.** A reverse proxy terminating TLS with Let's Encrypt keeps its certificates in a file. Losing it with the instance means requesting new ones, and the **duplicate certificate limit of five per week** turns the sixth rebuild in a week into an outage lasting until the window rolls. Either the file outlives the instance, or the staging endpoint is used while the infrastructure is being iterated.
+- **The address.** DNS pointing at an auto-assigned public IP makes every replacement a DNS change with propagation to wait on. An Elastic IP makes it a reassociation, and costs the same, since every public IPv4 address is billed either way.
+- **Anything written by hand.** Configuration reaches the instance through environment and parameter store, never through a file edited on the box, or the replacement is not identical and the disposability is imaginary.
 
 ## Dependencies between stacks
 
@@ -65,13 +77,16 @@ Each stack is applicable and verifiable on its own, and none depends on a stack 
 | 2   | `network`           | 1          |
 | 3   | `delivery`          | 1          |
 | 4   | CI publishes to ECR | 3          |
-| 5   | `compute`           | 2, 4       |
+| 5   | `database`          | 2          |
+| 6   | `compute`           | 2, 4, 5    |
 
-The order has a property worth exploiting: **nothing before step 5 costs more than cents.** A state bucket, an empty ECR repository and an IAM role are effectively free, so the entire delivery pipeline can be built and proven — a real image, built by CI, authenticated by OIDC, landing in a real registry — before anything starts billing by the hour. The expensive, always-on resources arrive last, against a pipeline already known to work.
+The order has a property worth exploiting: **nothing through step 4 costs more than cents.** A state bucket, an empty VPC, an empty ECR repository and an IAM role are effectively free, so the entire delivery pipeline can be built and proven — a real image, built by CI, authenticated by OIDC, landing in a real registry — before anything starts billing by the hour. The always-on resources arrive last, against a pipeline already known to work.
+
+That is also why the spending thresholds in [infra/terraform/billing](../infra/terraform/billing) are raised in the same change that creates step 5, and not before. A budget that alerts on the first cent is a working tripwire for exactly as long as nothing is supposed to be spending — which is steps 1 through 4. Loosening it earlier removes the alarm during the only window it can do its job.
 
 ## State backend
 
-[terraform.md](terraform.md) sets three conditions under which local state is defensible: a single operator, nothing sensitive inside, and every resource cheap to recreate by hand. **The `network` and `compute` stacks break the last two.** State stores every attribute of every resource in plain text, so a database password lands in the file unencrypted, and a VPC with its subnets and routes is not something anyone wants to rebuild from memory.
+[terraform.md](terraform.md) sets three conditions under which local state is defensible: a single operator, nothing sensitive inside, and every resource cheap to recreate by hand. **`network` and `database` break the last two.** State stores every attribute of every resource in plain text, so a database password lands in the file unencrypted, and a VPC with its subnets and routes is not something anyone wants to rebuild from memory.
 
 That is the trigger for a remote backend, and it is about the content of the state rather than the size of the team.
 
