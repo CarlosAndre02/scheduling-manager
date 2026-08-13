@@ -43,3 +43,5 @@ logs/
 crash.log
 *.tfvars
 !*.tfvars.example
+# Carries the state bucket name, which contains the AWS account id
+backend.hcl

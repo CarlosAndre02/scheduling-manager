@@ -1,0 +1,15 @@
+# Shared backend settings for every stack except bootstrap.
+#
+# A `backend` block accepts no variables and no interpolation, so the bucket
+# name has to be a literal somewhere. The name carries the AWS account id,
+# which does not belong in a public repository — hence this file, kept out of
+# git and passed in at init time:
+#
+#   terraform init -backend-config=../backend.hcl
+#
+# Copy to backend.hcl and fill in from the bootstrap stack:
+#
+#   cd bootstrap && terraform output -raw backend_hcl > ../backend.hcl
+
+bucket = "tfstate-000000000000"
+region = "us-east-1"

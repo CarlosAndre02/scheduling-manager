@@ -15,14 +15,14 @@ A CloudTrail trail recording every AWS API call in the account, delivered to a t
 
 ## Prerequisites
 
-The same local setup as the billing stack: `terraform` and `awscli` on `PATH`, and an IAM user with `AdministratorAccess` configured through `aws configure`. Confirm with `aws sts get-caller-identity`.
+The same local setup as the billing stack: `terraform` 1.10 or newer and `awscli` on `PATH`, with credentials carrying `AdministratorAccess`. Confirm with `aws sts get-caller-identity`. The [bootstrap](../bootstrap) stack has to be applied first, since its bucket is where this stack's state lives.
 
 Nothing has to be enabled in the console first. CloudTrail's free 90-day event history is already running on every account; this stack is what makes the record outlive it.
 
 ## Running
 
 ```bash
-terraform init
+terraform init -backend-config=../backend.hcl
 terraform validate
 terraform plan
 terraform apply

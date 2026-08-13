@@ -55,8 +55,32 @@ Local state is defensible while all of these hold — and a stack that outgrows 
 
 That last point is what makes stateful resources the dividing line. Losing the state of a budget means recreating a budget; losing the state of a database means Terraform proposing to replace it.
 
-**Committed:** `*.tf`, `terraform.tfvars.example`, and `.terraform.lock.hcl` — the lock pins provider versions the way `package-lock.json` pins npm ones, so it belongs in git.
-**Ignored:** `terraform.tfvars` (per-account values), `*.tfstate`, `.terraform/`.
+The same test is what keeps one stack on local state permanently: the one whose only job is to create the bucket the others use — see [aws-stack-implementation.md](aws-stack-implementation.md#the-bootstrap-paradox).
+
+### A backend block takes no variables
+
+Unlike everything else in a configuration, a `backend` block is read before variables exist, so it accepts no `var.`, no interpolation and no data source. Every value in it must be a literal.
+
+That matters when a value should not be committed — a bucket name carrying an AWS account id, in a public repository. The escape is a **partial configuration**: leave the value out of the block and supply it at init time, from a file kept out of git.
+
+```hcl
+backend "s3" {
+  key          = "<stack>/terraform.tfstate"   # committed, not sensitive
+  encrypt      = true
+  use_lockfile = true                          # native S3 locking, 1.10 and later
+}
+```
+
+```bash
+terraform init -backend-config=../backend.hcl   # supplies bucket and region
+```
+
+Omitting the flag does not fail silently — Terraform prompts for the missing values interactively.
+
+**Changing a backend requires `-migrate-state`.** Terraform will not move state on its own: it detects that the configured backend differs from the recorded one, and asks before copying. The check afterwards is a `plan` reporting **no changes**, which proves the state arrived — an empty state at the destination shows up as a plan proposing to create everything the stack already owns.
+
+**Committed:** `*.tf`, `terraform.tfvars.example`, `backend.hcl.example`, and `.terraform.lock.hcl` — the lock pins provider versions the way `package-lock.json` pins npm ones, so it belongs in git.
+**Ignored:** `terraform.tfvars` (per-account values), `backend.hcl` (carries the account id), `*.tfstate`, `.terraform/`.
 
 ## Import
 
@@ -75,13 +99,15 @@ After importing, `plan` shows the difference between the adopted resource and th
 From the terminal, by hand. Automation solves concurrent applies and an audit trail of who applied what, neither of which exists with one operator and a stack that changes a few times a year. When application infrastructure arrives, that calculation changes.
 
 ```bash
-terraform init      # downloads providers, writes the lock file
-terraform validate  # syntax and type checking, no API calls
-terraform plan      # read the whole output
+terraform init -backend-config=../backend.hcl   # providers, lock file, backend
+terraform validate                              # syntax and types, no API calls
+terraform plan                                  # read the whole output
 terraform apply
 ```
 
 `fmt` is the formatter, equivalent to Prettier for the rest of the repository.
+
+The `-backend-config` flag is what supplies the values the backend block cannot hold, so it is needed on every `init` — not only the first. The one stack that omits it is the one holding local state.
 
 ## Provider regions
 

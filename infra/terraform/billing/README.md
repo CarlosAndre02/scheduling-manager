@@ -28,8 +28,9 @@ Both backfill data over roughly a day. `apply` succeeds before they finish; the 
 
 **Locally:**
 
-- An IAM user with `AdministratorAccess` and its access keys in `aws configure`. Never root access keys: a leaked root key has no mitigation, because no policy restricts root.
-- `terraform` and `awscli` on `PATH`.
+- Credentials carrying `AdministratorAccess`. Never root access keys: a leaked root key has no mitigation, because no policy restricts root. [docs/aws-governance.md](../../../docs/aws-governance.md#iam-user-vs-identity-center-user) covers why a temporary Identity Center session beats a long-lived IAM access key.
+- `terraform` 1.10 or newer — the S3 backend's native locking does not exist before it — and `awscli` on `PATH`.
+- The [bootstrap](../bootstrap) stack applied, and `../backend.hcl` written from its output. State lives in the bucket that stack creates.
 
 Verify with `aws sts get-caller-identity`.
 
@@ -37,7 +38,7 @@ Verify with `aws sts get-caller-identity`.
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars   # set alert_email
-terraform init
+terraform init -backend-config=../backend.hcl
 terraform validate
 terraform plan
 terraform apply
@@ -63,4 +64,4 @@ Confirm the subscription email AWS sends afterwards, and allow `no-reply@budgets
 
 **Tear down:** `terraform destroy` removes the budgets, the subscription, and the adopted monitor. Recreating works afterwards because deleting the monitor frees the account's single slot.
 
-State is local and gitignored. Losing it means the resources still exist while Terraform no longer knows about them; the recovery is to delete them in the console and apply again, or to import each one. That is cheap here and would not be for a stack owning a database — [docs/terraform.md](../../../docs/terraform.md#state) covers when a remote backend becomes necessary.
+**State** lives under the key `billing/terraform.tfstate` in the bucket owned by the [bootstrap](../bootstrap) stack, versioned and locked on every run. Recovering an earlier version and releasing a stuck lock are in that stack's README.
