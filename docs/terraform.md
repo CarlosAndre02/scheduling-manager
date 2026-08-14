@@ -107,6 +107,18 @@ terraform apply
 
 `fmt` is the formatter, equivalent to Prettier for the rest of the repository.
 
+Each step catches a different class of error, and only the last one is subject to what the service actually enforces:
+
+| Step       | Catches                                                                  |
+| ---------- | ------------------------------------------------------------------------ |
+| `validate` | syntax, types, and whether an argument exists in the provider's schema   |
+| `plan`     | what would change, comparing the configuration against state and the API |
+| `apply`    | everything a service only checks at write time                           |
+
+The third row is the one that surprises, because it looks like a class of error the first two should have caught. A name already taken, a quota, a limit on how many of something an account may hold, a value outside a set the schema does not describe — all of these are valid configuration until the API rejects them. A security group rule description, for instance, accepts only `a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*`, and nothing before `apply` knows that.
+
+A failure there is not a rollback. State records each resource as it succeeds, so the fix is to correct the cause and run again, and the plan will be whatever remains.
+
 The `-backend-config` flag is what supplies the values the backend block cannot hold, so it is needed on every `init` — not only the first. The one stack that omits it is the one holding local state.
 
 ## Provider regions
