@@ -42,6 +42,29 @@ To run a single file, keep `npm run dev` in another terminal and call jest direc
 npx jest tests/integration/user/post.test.ts
 ```
 
+The image is covered by a separate suite, which builds it and asserts what it carries and how it shuts down:
+
+```bash
+npm run test:image
+```
+
+## CI
+
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every push to `main` and on every pull request, as four parallel jobs:
+
+| Job          | What it runs                                                                          |
+| ------------ | ------------------------------------------------------------------------------------- |
+| `quality`    | `tsc --noEmit`, eslint, `prettier --check`, `npm audit --omit=dev --audit-level=high` |
+| `test`       | `npm test` — the integration suite against a real Postgres                            |
+| `dockerfile` | hadolint over the `Dockerfile`                                                        |
+| `image`      | builds the image, scans it with Trivy, then `npm run test:image` against that build   |
+
+Every one of them has a local equivalent, so a red pipeline is reproducible without pushing.
+
+A fifth job, `publish`, runs only on `main` and only after the other four pass. It pushes the image the `image` job already built and tested to ECR, tagged by commit, authenticating with a short-lived token rather than a stored key.
+
+Why each gate sits where it does, and how Dependabot feeds it, is in [docs/ci-cd.md](docs/ci-cd.md).
+
 ## Clean Architecture
 
 `src/modules/` holds one folder per domain, all following the same layering. `src/shared/` holds what crosses them.
@@ -74,4 +97,6 @@ Use cases depend on repository _interfaces_, never on Drizzle, so the domain has
 - [docs/api.md](docs/api.md) — HTTP contract, environment variables, migrations, deployment notes
 - [docs/ci-cd.md](docs/ci-cd.md) — the pipeline: what runs on every push and why
 - [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail
+- [docs/aws-stack-implementation.md](docs/aws-stack-implementation.md) — how the infrastructure is split into stacks, and in which order
+- [docs/vpc.md](docs/vpc.md) — VPC, subnets, availability zones, egress options, security groups
 - [docs/terraform.md](docs/terraform.md) — declarative model, state, imports; stacks live in [infra/terraform/](infra/terraform/)

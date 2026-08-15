@@ -62,7 +62,7 @@ docker build -t scheduling-manager:$(git rev-parse --short HEAD) .
 docker run --rm -p 4000:4000 --env-file .env scheduling-manager:<tag>
 ```
 
-Tag by commit SHA, never `latest`: a rollback needs a target that does not move.
+Tag by commit SHA, never `latest`: a rollback needs a target that does not move. The registry enforces that — tags there are immutable and cannot be repointed, so the same discipline locally keeps a local build and a published one meaning the same thing. Images that reach the registry are built and pushed by CI, never from a laptop; see [ci-cd.md](ci-cd.md#publishing).
 
 The [Dockerfile](../Dockerfile) is multi-stage. The build stage installs every dependency and runs `npm run build`; the runtime stage starts from a clean base and copies only `dist/`, the pruned `node_modules` and `package.json`. TypeScript, jest, eslint and the source itself never reach the published image — smaller to pull, and far less for a scanner or an intruder to find.
 

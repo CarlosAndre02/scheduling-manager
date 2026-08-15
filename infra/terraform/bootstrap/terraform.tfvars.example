@@ -1,0 +1,4 @@
+# Every value has a working default. Copy this file only to override one.
+#
+# region               = "us-east-1"
+# state_retention_days = 90

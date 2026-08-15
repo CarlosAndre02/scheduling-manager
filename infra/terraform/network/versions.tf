@@ -9,17 +9,19 @@ terraform {
     }
   }
 
-  # Bucket and region come from ../backend.hcl at init time — see the billing
-  # stack, or bootstrap/README.md for why.
+  # Bucket and region come from ../backend.hcl at init time — see the bootstrap
+  # stack's README for why.
   #
   #   terraform init -backend-config=../backend.hcl
   backend "s3" {
-    key          = "audit/terraform.tfstate"
+    key          = "network/terraform.tfstate"
     encrypt      = true
     use_lockfile = true
   }
 }
 
 provider "aws" {
+  # Unlike the billing and audit stacks, this one is regional in the ordinary
+  # sense: every resource here exists in one region and nowhere else.
   region = var.region
 }
