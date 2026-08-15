@@ -97,3 +97,23 @@ The backend is an S3 bucket with versioning and encryption. Locking prevents two
 The bucket that holds state is itself infrastructure, so the first stack cannot store its state in a backend that does not exist yet. The `bootstrap` stack keeps local state, and that is consistent rather than an exception: it owns a single bucket, holds no secret, and if the file is lost the bucket is adopted back with one `terraform import` — exactly the test that makes local state acceptable.
 
 Every other stack declares the S3 backend from its first apply, so none of them ever holds state locally.
+
+## Security posture
+
+What the implementation defends against and what it does not. Every gap here is a decision with a trigger attached, not an oversight — and the list grows as stacks are added, so it describes what has been decided rather than everything that will need deciding.
+
+### Network exposure
+
+**The instance sits one rule away from the internet.** In a public subnet the security group is the only layer between the workload and the world, where a private subnet would leave it without a routable address even if a rule were wrong. This is the trade in [vpc.md](vpc.md#egress-from-a-private-subnet), taken because a NAT gateway costs more per month than everything else combined.
+
+**Egress is unrestricted.** Any process on the instance can reach any host, which is the path a compromised dependency takes to exfiltrate data or call home. It is open deliberately: the alternative is an allowlist covering ECR, Systems Manager, ACME and package mirrors, which is a moving target maintained by hand. AWS managed prefix lists make it tractable, and the trigger is the instance holding customer data rather than test rows.
+
+**Port 80 is open and must serve nothing.** It exists for the redirect to 443 and the ACME HTTP-01 challenge. A plaintext listener that answers anything real is a downgrade path; switching the proxy to the TLS-ALPN-01 challenge closes the port outright.
+
+**Nothing rate limits ahead of the instance.** A reverse proxy's rate limiting runs in the instance's own process, so an attack has already spent its bandwidth and CPU by the time a limit applies. Absorbing traffic before it arrives is what a load balancer with WAF rate rules buys.
+
+**IPv4 rules do not cover IPv6.** Inert while the VPC has no IPv6 block, and not inert the moment one is added: a rule written with `cidr_ipv4` ignores IPv6 traffic entirely, so a subnet given an IPv6 range with unchanged security groups is open in a way the configuration does not show.
+
+**There is no network-level record.** CloudTrail answers what was called on the AWS API, never what connected to what. Flow logs answer the second question and are off for cost, which means an investigation into a suspected intrusion starts with no packet history.
+
+**The emptied default group fails closed, and confusingly.** Anything created without an explicit security group lands in the default one, which now permits nothing. That is the safe direction, but the symptom is a resource that times out rather than one that reports a denial.
