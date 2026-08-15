@@ -1,0 +1,11 @@
+# github_repository has no default on purpose: it is the whole access boundary,
+# and a fork inheriting it would grant the original repository push rights.
+github_repository = "owner/repository"
+
+# Everything else has a working default. Uncomment only to override.
+#
+# project                 = "scheduling-manager"
+# region                  = "us-east-1"
+# github_branch           = "main"
+# image_retention_count   = 30
+# untagged_retention_days = 7
