@@ -17,9 +17,10 @@ updates:
         dependency-type: development
         update-types: [minor, patch]
 
-  # Actions are referenced by tag, which is mutable — whoever owns the action
-  # can repoint it. Keeping them current is what makes moving to SHA pinning
-  # maintainable once these jobs handle deploy credentials.
+  # Actions are pinned by commit SHA, because one of the jobs holds AWS
+  # credentials and a tag can be repointed by whoever owns the action.
+  # Dependabot updates the SHA and the version comment beside it together, so
+  # pinning costs a pull request per update rather than the ability to update.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

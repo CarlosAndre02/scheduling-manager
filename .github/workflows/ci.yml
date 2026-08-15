@@ -5,8 +5,14 @@ on:
     branches: [main]
   pull_request:
 
-# The default token can write to almost everything in the repository. Nothing
-# here needs more than reading it.
+# The default token can write to almost everything in the repository. This is
+# the floor every job starts from; the one job that needs more raises it for
+# itself, so a pull request cannot reach AWS through any of the others.
+#
+# Actions are pinned by commit SHA rather than by tag, because a tag can be
+# repointed by whoever owns the action and one of these jobs holds credentials.
+# The trailing comment is the version that SHA belongs to, and Dependabot keeps
+# both in step.
 permissions:
   contents: read
 
@@ -20,9 +26,9 @@ jobs:
     name: Types, lint, format, advisories
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # Reads engines.node from package.json, so the version used here
           # cannot drift from the one the project pins.
@@ -45,9 +51,9 @@ jobs:
     name: Integration tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: package.json
           cache: npm
@@ -67,9 +73,9 @@ jobs:
     name: Dockerfile lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: hadolint/hadolint-action@v3.4.0
+      - uses: hadolint/hadolint-action@2a66e89f53d0771bb131a7fa31f3136336094aa6 # v3.4.0
         with:
           dockerfile: Dockerfile
           # Info-level findings are advice about layer count, which applies to
@@ -82,9 +88,9 @@ jobs:
     name: Image build, scan and tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: package.json
           cache: npm
@@ -102,7 +108,7 @@ jobs:
       # advisories with no fix released, and a job that is permanently red gets
       # switched off. What remains is fixable, and for the base layer the fix
       # is a rebuild — this job builds fresh every run, so it self-heals.
-      - uses: aquasecurity/trivy-action@v0.36.0
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: scheduling-manager:${{ github.sha }}
           severity: HIGH,CRITICAL
@@ -112,3 +118,76 @@ jobs:
       - run: npx jest --config jest.image.config.js --runInBand
         env:
           IMAGE_TAG: scheduling-manager:${{ github.sha }}
+
+      # Hand the publish job the exact bytes that were just scanned and tested.
+      # Rebuilding there would publish an image no gate in this pipeline ever
+      # examined — a different base digest or a different layer order is enough
+      # to make the scan result untrue of what shipped.
+      #
+      # Already gzipped, so the upload does not compress it a second time.
+      - name: Export the tested image
+        if: github.ref == 'refs/heads/main'
+        run: docker save scheduling-manager:${{ github.sha }} | gzip > image.tar.gz
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: image
+          path: image.tar.gz
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    name: Publish to ECR
+    runs-on: ubuntu-latest
+
+    # Every gate, not just the image one: an image built from a commit that
+    # fails lint or the integration suite is not one to keep.
+    needs: [quality, test, dockerfile, image]
+    if: github.ref == 'refs/heads/main'
+
+    # id-token sits here rather than at the top of the file. Job permissions
+    # replace the workflow's, so only this job can ask GitHub for a token; the
+    # other four keep contents:read and cannot reach AWS at all.
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      REPOSITORY: scheduling-manager
+      IMAGE_TAG: ${{ github.sha }}
+
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: image
+
+      - run: docker load < image.tar.gz
+
+      # No stored credential. The workflow presents a short-lived signed token
+      # describing this repository, branch and event, and STS exchanges it for
+      # credentials that expire within the hour — docs/ci-cd.md.
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
+
+      # Tags in the registry are immutable, so pushing an existing one fails.
+      # Re-running a workflow on an already-published commit is a normal thing
+      # to do, and it should be a no-op rather than a red build.
+      - name: Push, unless this commit is already published
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          if aws ecr describe-images \
+              --repository-name "$REPOSITORY" \
+              --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "$REPOSITORY:$IMAGE_TAG is already published — nothing to do."
+            exit 0
+          fi
+
+          docker tag "$REPOSITORY:$IMAGE_TAG" "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
+          docker push "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
