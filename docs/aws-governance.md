@@ -188,6 +188,48 @@ Lowering a service quota is not an option: Service Quotas only accepts values ab
 
 Region choice belongs on this list too. The free tier is region-independent, so within it the region costs nothing either way — but São Paulo (`sa-east-1`) is among the most expensive regions on the platform, running roughly 50–65% above `us-east-1` for equivalent compute, with a wider gap on data transfer out. The trade is latency: roughly 10–30 ms from Brazil to `sa-east-1` against 110–150 ms to `us-east-1`, which matters for interactive workloads and not for an API answering JSON. Confirm current figures in the pricing calculator before committing; the ratio moves by instance family.
 
+### Running only during the hours in use
+
+This is not a contradiction of [why nothing shuts down automatically](#why-nothing-shuts-down-automatically), and the difference is worth stating plainly. That section rejects acting on **spend**, a signal that arrives late and says nothing about whether anyone is using the system. A schedule acts on a **known** fact — that an environment has working hours — and the outage it causes is one that was decided in advance rather than triggered by a threshold.
+
+That also bounds where it applies. An environment switched off nineteen hours a day is unavailable nineteen hours a day, which is sound for development and staging and is an availability decision, not a cost one, the moment someone outside the team can arrive at any hour. Cutting a production bill means running something smaller, or something that scales to zero by design — not turning it off.
+
+**"On-demand" does not mean pay-per-use.** It is AWS's term for "no commitment, billed hourly", and it is the default. An instance accrues charges for every hour it _exists_, running or not. The opposite of on-demand is a Reserved Instance, which is cheaper per hour and bills for the full term regardless — a commitment, not a reduction.
+
+**Stop, never terminate.** Scheduled scaling on an Auto Scaling group is the usual recommendation and it does not stop instances, it replaces them: capacity returns as a _new_ instance with a new volume. Anything the host accumulated is gone every morning, which for a reverse proxy holding Let's Encrypt certificates means a fresh certificate request per day and a broken TLS handshake once the weekly duplicate-certificate limit is reached — see [aws-stack-implementation.md](aws-stack-implementation.md#keeping-compute-disposable). Stopping and starting a specific instance keeps its root volume, which is what makes the pattern survivable.
+
+**EventBridge Scheduler is the mechanism**, and it needs no Lambda: universal targets let a schedule call an AWS SDK action directly, so `ec2:StopInstances` is the target rather than something that invokes it.
+
+```hcl
+resource "aws_scheduler_schedule" "stop" {
+  schedule_expression          = "cron(0 20 ? * MON-FRI *)"
+  schedule_expression_timezone = "America/Sao_Paulo"
+
+  flexible_time_window { mode = "OFF" }
+
+  target {
+    arn      = "arn:aws:scheduler:::aws-sdk:ec2:stopInstances"
+    role_arn = aws_iam_role.scheduler.arn
+    input    = jsonencode({ InstanceIds = [<id>] })
+  }
+}
+```
+
+Two reasons to prefer it over the older EventBridge rule plus a Lambda: the schedule carries a **time zone**, so daylight saving does not shift it, where rules are UTC only; and the free tier of 14 million invocations a month means two a day never leaves it. The role it assumes should permit the stop and start actions on that one instance ARN and nothing else. Parameter names in a universal target follow the SDK shape rather than the API reference, so the first execution is the check.
+
+**What still bills while stopped** is the part that disappoints:
+
+|                            | 24/7        | ~5 h on weekdays |
+| -------------------------- | ----------- | ---------------- |
+| `t4g.small` instance hours | US$12.3     | US$2.5           |
+| 20 GB gp3 root volume      | US$1.6      | **US$1.6**       |
+| Elastic IP                 | US$3.7      | **US$3.7**       |
+| **Total**                  | **US$17.5** | **US$7.8**       |
+
+Storage and address are billed in full, so the saving is around half rather than the four-fifths an hours-only calculation suggests. The Elastic IP is not optional either: without it a stopped instance is assigned a different public address on start, and DNS breaks every morning.
+
+Two operational details: starting takes tens of seconds for EC2 and minutes for RDS, so the first request of the day cannot be the trigger; and **the Instance Scheduler on AWS solution is the wrong tool at this size** — its Lambda, DynamoDB and log costs exceed what scheduling a single instance saves.
+
 ### What the guardrails themselves cost
 
 - Budget **monitoring** is free and unlimited. Budget **actions** are what carry a price — the first two action-enabled budgets are free per month, then $0.10 per day each.
