@@ -122,7 +122,40 @@ The compiled migrator is invoked directly rather than through `npm run db:migrat
 
 Because the migration ships in the same image as the code, the two can never drift apart. `npm run build` copies the SQL files into `dist/` (via [scripts/copy-migrations.mjs](../scripts/copy-migrations.mjs)) — `tsc` alone would not.
 
-Rolling the app back to a previous image does **not** roll the schema back, so migrations must be backward compatible with the release before them (expand/contract: add a nullable column and backfill in one release, start writing to it in the next, drop the old one only once no running version reads it).
+### Rollback and schema compatibility
+
+Rolling the app back to a previous image does **not** roll the schema back, and it must not: code is stateless, so replacing the image restores the previous behaviour exactly, while a database holds state. A down migration that drops a column does not undo anything — it destroys every value written there since.
+
+So the schema only moves forward. What makes a rollback safe is an invariant instead:
+
+> **The schema of release N has to work with the code of release N−1.**
+
+This is the same guarantee Heroku offered, and it is worth being precise about how: `heroku rollback` restored a previous slug and its config, and never touched the database, which the platform documented plainly. Compatibility was not provided — it was a discipline the release model made cheap to keep. Migrations ran in a release phase that blocked the deploy when they failed, and the schema stayed where it was.
+
+### Expand and contract
+
+Every schema change becomes up to three releases, each safe to roll back on its own:
+
+1. **Expand** — additive only. A new nullable column, a new table, a new index. Old code ignores it; new code may use it.
+2. **Backfill** — populate existing rows, and write to both places while both versions can run.
+3. **Contract** — remove the old structure, in a later release, once rolling back past the expand is no longer a possibility.
+
+Only the third step breaks a rollback, which is exactly why it is a separate deploy rather than the tail of the first.
+
+| Direct change, breaks rollback | Expand and contract                                                    |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `RENAME COLUMN a TO b`         | add `b`, write both, backfill, drop `a` later                          |
+| `ADD COLUMN c NOT NULL`        | add it nullable, backfill, apply the constraint afterwards             |
+| `DROP COLUMN d`                | stop writing it, release, drop it in a later one                       |
+| Change a column's type         | new column with the new type, write both, move reads, drop the old one |
+
+**The dangerous case is not in the table.** Changing the _format_ of values inside a column the old code still reads produces no error at all — the previous release parses the new format as if it were the old one and is quietly wrong. A format change needs a new column, exactly like a type change.
+
+### Proving the invariant
+
+The rule above is only worth as much as its enforcement, and it is mechanically checkable: apply the migrations from the change onto a clean database, then run the **previous release's** test suite against that schema. If the old tests pass, the old code runs on the new schema, which is the whole claim.
+
+Two things never provide this guarantee. Down migrations are a local convenience and should not be run against real data. Point-in-time recovery restores to a new instance and discards everything after the chosen moment, which makes it a disaster tool rather than a rollback — see [rds.md](rds.md#backups-and-what-point-in-time-recovery-is-not).
 
 ## Endpoints
 
