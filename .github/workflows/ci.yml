@@ -16,10 +16,13 @@ on:
 permissions:
   contents: read
 
-# A newer push makes the previous run's answer irrelevant before it finishes.
+# A newer push makes the previous run's answer irrelevant before it finishes —
+# but only while a run is purely an answer. On main it publishes an image and
+# moves a schema, and cancelling that halfway leaves a release half made, so
+# runs there queue instead of replacing each other.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   quality:
@@ -199,3 +202,56 @@ jobs:
 
           docker tag "$REPOSITORY:$IMAGE_TAG" "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
           docker push "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
+
+  migrate:
+    name: Apply migrations
+    runs-on: ubuntu-latest
+
+    # After the artifact exists, before anything serves the new code. A release
+    # with no published image has nothing to deploy, so moving the schema for it
+    # would be a change with no release behind it.
+    needs: [publish]
+    if: github.ref == 'refs/heads/main'
+
+    # No AWS access: this job reaches the database directly and never the
+    # account, so it holds database credentials and the publish job holds the
+    # AWS token, and neither sees the other's.
+    permissions:
+      contents: read
+
+    env:
+      REPOSITORY: scheduling-manager
+      IMAGE_TAG: ${{ github.sha }}
+
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: image
+
+      # The same bytes the gates examined. Running the migration from the image
+      # being released is what keeps the SQL and the code that expects it from
+      # drifting apart.
+      - run: docker load < image.tar.gz
+
+      # The CA already travels in the image, so there is nothing to fetch, mount
+      # or keep in a secret — the same file the application on the host verifies
+      # against is the one this container uses. certs/README.md covers why it is
+      # public material and belongs in git.
+      #
+      # DATABASE_URL carries no sslmode: pg lets a connection string replace the
+      # ssl option wholesale, which would discard the CA below. TLS is
+      # configured entirely by DATABASE_SSL_CA — see docs/supabase.md.
+      #
+      # The statement timeout is disabled for this run only. The application
+      # sets one so a stuck query cannot hold a connection, and DDL against a
+      # populated table can legitimately take longer than any request should.
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          docker run --rm \
+            --env DATABASE_URL \
+            --env DATABASE_SSL_CA=/app/certs/supabase-ca.pem \
+            --env DATABASE_STATEMENT_TIMEOUT_MS=0 \
+            "$REPOSITORY:$IMAGE_TAG" \
+            node dist/shared/database/migrate.js

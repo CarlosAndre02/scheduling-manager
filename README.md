@@ -61,7 +61,7 @@ npm run test:image
 
 Every one of them has a local equivalent, so a red pipeline is reproducible without pushing.
 
-A fifth job, `publish`, runs only on `main` and only after the other four pass. It pushes the image the `image` job already built and tested to ECR, tagged by commit, authenticating with a short-lived token rather than a stored key.
+Two further jobs run only on `main`, after all four pass. `publish` pushes the image the `image` job already built and tested to ECR, tagged by commit and authenticated with a short-lived token rather than a stored key; `migrate` then applies pending schema changes from that same image.
 
 Why each gate sits where it does, and how Dependabot feeds it, is in [docs/ci-cd.md](docs/ci-cd.md).
 
@@ -99,4 +99,6 @@ Use cases depend on repository _interfaces_, never on Drizzle, so the domain has
 - [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail
 - [docs/aws-stack-implementation.md](docs/aws-stack-implementation.md) — how the infrastructure is split into stacks, and in which order
 - [docs/vpc.md](docs/vpc.md) — VPC, subnets, availability zones, egress options, security groups
+- [docs/supabase.md](docs/supabase.md) — the database provider: endpoint choice, TLS, and what it changes in AWS
+- [docs/rds.md](docs/rds.md) — why RDS is not used, and what a managed PostgreSQL requires of the application
 - [docs/terraform.md](docs/terraform.md) — declarative model, state, imports; stacks live in [infra/terraform/](infra/terraform/)

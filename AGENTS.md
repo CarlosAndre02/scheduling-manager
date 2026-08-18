@@ -18,6 +18,8 @@ Read the relevant one before changing an area, and update it when a flow changes
 - [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail, and the pitfalls found along the way
 - [docs/aws-stack-implementation.md](docs/aws-stack-implementation.md) — how the infrastructure is split into Terraform stacks, what each owns, apply order, state backend
 - [docs/vpc.md](docs/vpc.md) — the network model: VPC, subnets, AZs, internet/NAT gateways, VPC endpoints, security groups
+- [docs/supabase.md](docs/supabase.md) — the database provider: endpoint choice, TLS, and what it changes in AWS
+- [docs/rds.md](docs/rds.md) — why RDS is not used, and what any managed PostgreSQL requires of the application
 - [docs/terraform.md](docs/terraform.md) — the declarative model, state, imports, and how stacks under `infra/terraform/` are run
 
 ## Commands
