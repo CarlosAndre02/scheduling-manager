@@ -99,5 +99,6 @@ Use cases depend on repository _interfaces_, never on Drizzle, so the domain has
 - [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail
 - [docs/aws-stack-implementation.md](docs/aws-stack-implementation.md) — how the infrastructure is split into stacks, and in which order
 - [docs/vpc.md](docs/vpc.md) — VPC, subnets, availability zones, egress options, security groups
+- [docs/supabase.md](docs/supabase.md) — the database provider: endpoint choice, TLS, and what it changes in AWS
 - [docs/rds.md](docs/rds.md) — why RDS is not used, and what a managed PostgreSQL requires of the application
 - [docs/terraform.md](docs/terraform.md) — declarative model, state, imports; stacks live in [infra/terraform/](infra/terraform/)
