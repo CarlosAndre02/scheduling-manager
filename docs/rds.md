@@ -84,9 +84,16 @@ How `pg` 8 interprets the parameter is not what libpq does, and it is changing:
 | `verify-full`        | TLS with full verification     |
 | `no-verify`          | TLS, certificate not checked   |
 
-`pg` emits a deprecation warning about this: `prefer`, `require` and `verify-ca` are currently aliases for `verify-full`, and in `pg` 9 they will adopt libpq semantics, where `require` encrypts **without verifying the server**. Writing `sslmode=require` therefore means "verify" today and "do not verify" after a major upgrade — a silent weakening at a version bump. **Write `sslmode=verify-full` explicitly**, which means the same thing before and after.
+`pg` emits a deprecation warning about this: `prefer`, `require` and `verify-ca` are currently aliases for `verify-full`, and in `pg` 9 they will adopt libpq semantics, where `require` encrypts **without verifying the server**. Writing `sslmode=require` therefore means "verify" today and "do not verify" after a major upgrade — a silent weakening at a version bump.
 
-Verification then needs a certificate authority the client trusts. RDS certificates do not chain to a CA in Node's default trust store, so the RDS CA bundle has to be shipped in the image and passed as `ssl.ca` — a connection string alone cannot express it, so this is a change to `conn.ts` rather than to configuration.
+Verification also needs a certificate authority the client trusts, and RDS certificates do not chain to one in Node's default store, so the RDS CA bundle has to be supplied as `ssl.ca`. **That cannot be combined with `sslmode` in the URL.** The connection string does not merge with the `ssl` option, it replaces it:
+
+| Configuration                                      | Resulting `ssl`            |
+| -------------------------------------------------- | -------------------------- |
+| URL without `sslmode`, plus `ssl: { ca }`          | `{ ca }`                   |
+| URL with `sslmode=verify-full`, plus `ssl: { ca }` | `{}` — the CA is discarded |
+
+The second row fails against any provider with its own certificate authority, and the error it produces names the certificate rather than the configuration that dropped it. So TLS is configured entirely in [conn.ts](../src/shared/database/conn.ts) and `DATABASE_URL` carries no `sslmode` at all — which has the side effect of making the `pg` 9 change above irrelevant here.
 
 ### Everything else the connection needs
 
