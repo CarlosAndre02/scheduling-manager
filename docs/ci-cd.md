@@ -2,7 +2,7 @@
 
 What runs on every change, and why each gate is set where it is. For running and testing locally, see [api.md](api.md).
 
-[.github/workflows/ci.yml](../.github/workflows/ci.yml) triggers on every push to `main` and every pull request. Four jobs, in parallel, roughly three minutes of wall clock. The repository is public, so GitHub-hosted runners cost nothing.
+[.github/workflows/ci.yml](../.github/workflows/ci.yml) triggers on every push to `main` and every pull request. Four gates run in parallel, roughly three minutes of wall clock. The repository is public, so GitHub-hosted runners cost nothing.
 
 | Job          | Catches                                                                              |
 | ------------ | ------------------------------------------------------------------------------------ |
@@ -11,7 +11,7 @@ What runs on every change, and why each gate is set where it is. For running and
 | `dockerfile` | Dockerfile smells, without building anything                                         |
 | `image`      | that the image builds, carries no fixable HIGH/CRITICAL CVE, and drains on `SIGTERM` |
 
-A fifth job, `publish`, is not a gate — it delivers the result, and only on `main`. See [publishing](#publishing).
+Two more jobs run only on `main`, and neither is a gate: `publish` delivers the image, and `migrate` moves the schema. See [publishing](#publishing) and [applying migrations](#applying-migrations).
 
 ## Why each gate sits where it does
 
@@ -41,7 +41,7 @@ The threshold that makes this worth its cost is a job that can reach AWS. A job 
 
 The cost is that an action update arrives as a pull request rather than as nothing at all. Dependabot moves the SHA and the comment together, so the pin does not stop updates — it makes them visible.
 
-`concurrency` with `cancel-in-progress` drops a run whose answer a newer push already invalidated.
+`concurrency` drops a run whose answer a newer push already invalidated — on pull requests only, for the reason in [why runs on main queue instead of cancelling](#why-runs-on-main-queue-instead-of-cancelling).
 
 ## Authenticating to AWS
 
@@ -122,6 +122,24 @@ The pipeline's own attack surface, and what bounds each part of it.
 **Artifacts are as readable as the repository.** The image travels between jobs as a build artifact, which anyone who can read the repository's runs can download. It holds no secret, because configuration reaches the container at runtime — and that property has to survive: an image with a credential baked in must never be passed this way.
 
 **Cache scope is GitHub's guarantee, not this repository's.** `cache: npm` is shared across runs. A pull request cannot write into the cache that `main` reads, because GitHub isolates caches per branch with only one-way inheritance. Nothing here enforces that, so it is worth knowing it is inherited rather than configured.
+
+## Applying migrations
+
+The `migrate` job runs the schema change from the image that was just published, on `main` only. It is the release phase: the schema moves forward, and only then can anything serve the code that expects it.
+
+**It runs after `publish` rather than beside it.** A release with no published image has nothing to deploy, so moving a schema on its behalf would be a change with no release behind it.
+
+**It holds database credentials and no AWS access, and `publish` holds the AWS token and no database credentials.** Splitting the two jobs is what makes that possible; a single job doing both would hand either credential to whatever compromised the other.
+
+**It runs the published image rather than the repository.** The migration SQL and the code that expects it ship together, so invoking the image is what keeps them from being applied out of step.
+
+**The statement timeout is disabled for this run only**, since DDL against a populated table can legitimately exceed any value that makes sense for a request. The application keeps its timeout so a stuck query cannot hold a pool connection.
+
+Whether it is safe to apply a schema change automatically is not a property of the pipeline but of the change: it holds exactly as long as migrations stay compatible with the release before them — see [api.md](api.md#rollback-and-schema-compatibility).
+
+### Why runs on main queue instead of cancelling
+
+`cancel-in-progress` is switched off for `main`. Cancelling a run is correct while a run is only an _answer_ about a commit — a newer push makes the older answer irrelevant. It stops being correct once a run publishes an image and moves a schema, because a cancellation halfway through leaves a release half made. Pull requests keep the old behaviour, where cancelling saves runner time and loses nothing.
 
 ## Dependabot
 

@@ -45,6 +45,16 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
 
+# Certificate authorities the database is verified against — public material,
+# not secrets. They travel in the image so that both the migration container and
+# the running application get them without a network fetch or a credential, and
+# so a replacement instance is identical to the one it replaces.
+#
+# No ENV points at them here on purpose: DATABASE_SSL_CA is set per environment,
+# so running this same image against a plaintext database does not try to
+# negotiate TLS. See certs/README.md.
+COPY certs/ ./certs/
+
 # The application runs `node`, never `npm`. Keeping npm here ships its own
 # bundled dependencies, whose advisories are counted against this image even
 # though nothing loads them, and hands anyone who gets a shell a package

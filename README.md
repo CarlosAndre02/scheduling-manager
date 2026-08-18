@@ -61,7 +61,7 @@ npm run test:image
 
 Every one of them has a local equivalent, so a red pipeline is reproducible without pushing.
 
-A fifth job, `publish`, runs only on `main` and only after the other four pass. It pushes the image the `image` job already built and tested to ECR, tagged by commit, authenticating with a short-lived token rather than a stored key.
+Two further jobs run only on `main`, after all four pass. `publish` pushes the image the `image` job already built and tested to ECR, tagged by commit and authenticated with a short-lived token rather than a stored key; `migrate` then applies pending schema changes from that same image.
 
 Why each gate sits where it does, and how Dependabot feeds it, is in [docs/ci-cd.md](docs/ci-cd.md).
 

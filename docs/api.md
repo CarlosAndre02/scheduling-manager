@@ -26,6 +26,9 @@ cp .env.example .env
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `local_user` / `local_password` / `scheduling_manager`                     | Postgres container                                                          |
 | `DATABASE_URL`                                        | `postgresql://local_user:local_password@localhost:5432/scheduling_manager` | Drizzle (app + migrations)                                                  |
 | `DATABASE_POOL_MAX`                                   | `10`                                                                       | connection pool ceiling **per container**                                   |
+| `DATABASE_SSL_CA`                                     | empty                                                                      | path to the provider's CA bundle; TLS is verified against it                |
+| `DATABASE_SSL`                                        | empty                                                                      | `true` for a provider whose certificate is publicly trusted                 |
+| `DATABASE_STATEMENT_TIMEOUT_MS`                       | `10000`                                                                    | Postgres cancels a query that overruns; migrations must override with `0`   |
 | `SHUTDOWN_DRAIN_DELAY_MS`                             | `0` locally, `5000`+ behind a load balancer                                | how long `/health` reports unhealthy before connections stop being accepted |
 | `SHUTDOWN_TIMEOUT_MS`                                 | `15000`                                                                    | grace period for in-flight requests before sockets are forced closed        |
 
@@ -112,15 +115,25 @@ npm run db:migrate         # applies it
 
 ### Migrations in production
 
-Run migrations as a **one-shot container from the image being deployed**, inside the VPC (the database is not publicly reachable), before restarting the app containers:
+Migrations run as a **one-shot container from the image being released**, before anything serves the new code. The pipeline does this on `main` — see [ci-cd.md](ci-cd.md#applying-migrations) — and the same command is what runs it by hand:
 
 ```bash
-docker run --rm --env-file /etc/app.env <image>:<sha> node dist/shared/database/migrate.js
+docker run --rm \
+  --env DATABASE_URL \
+  --env DATABASE_SSL_CA=/app/certs/supabase-ca.pem \
+  --env DATABASE_STATEMENT_TIMEOUT_MS=0 \
+  <image>:<sha> node dist/shared/database/migrate.js
 ```
 
-The compiled migrator is invoked directly rather than through `npm run db:migrate:prod`, because the image carries no package manager — see above.
+Three details in that command are load-bearing:
 
-Because the migration ships in the same image as the code, the two can never drift apart. `npm run build` copies the SQL files into `dist/` (via [scripts/copy-migrations.mjs](../scripts/copy-migrations.mjs)) — `tsc` alone would not.
+- **The compiled migrator is invoked directly**, not through `npm run db:migrate:prod`, because the image carries no package manager — see above.
+- **`DATABASE_URL` is passed by name**, so the credential inside it never appears on a command line or in a log.
+- **The statement timeout is disabled for this run.** The application sets one so a stuck query cannot hold a pool connection, and DDL against a populated table can legitimately take longer than any value that makes sense for a request.
+
+Because the migration ships in the same image as the code, the two can never drift apart. `npm run build` copies the SQL files into `dist/` (via [scripts/copy-migrations.mjs](../scripts/copy-migrations.mjs)) — `tsc` alone would not. The certificate authority the connection is verified against travels the same way, from [certs/](../certs).
+
+The migrator takes a Postgres advisory lock and aborts if another run holds it, so two deploys cannot interleave. That protection is session-scoped, which is why the connection must not go through a transaction-mode pooler — see [supabase.md](supabase.md#the-connection-endpoint-is-not-a-free-choice).
 
 ### Rollback and schema compatibility
 
