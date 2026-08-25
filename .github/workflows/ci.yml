@@ -89,7 +89,13 @@ jobs:
 
   image:
     name: Image build, scan and tests
-    runs-on: ubuntu-latest
+    # arm64, because the instance this image is deployed to is Graviton. An
+    # x86 runner produces an x86 image that Docker will happily push, pull and
+    # start on arm64 — and the container dies in milliseconds with an exec
+    # format error, leaving the proxy with no backend and a bare 404 as the
+    # only symptom. Free for public repositories, and native rather than
+    # emulated, so nothing is slower than it was.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -117,6 +123,19 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
+      # The check that would have caught the architecture mismatch above.
+      # Nothing else in the pipeline notices: the build succeeds, the scan
+      # succeeds, the push succeeds, and the failure surfaces only as a
+      # container that will not start on the host.
+      - name: Assert the image matches the deployment architecture
+        run: |
+          got=$(docker image inspect --format '{{.Architecture}}' "scheduling-manager:${{ github.sha }}")
+          if [ "$got" != "arm64" ]; then
+            echo "Image is $got but the instance is arm64 — it would not start." >&2
+            exit 1
+          fi
+          echo "Image architecture: $got"
 
       - run: npx jest --config jest.image.config.js --runInBand
         env:
@@ -197,7 +216,10 @@ jobs:
 
   migrate:
     name: Apply migrations
-    runs-on: ubuntu-latest
+    # Runs the image, so it needs the architecture the image was built for.
+    # The publish job only moves bytes and does not, which is why it stays on
+    # the default runner.
+    runs-on: ubuntu-24.04-arm
 
     # After the artifact exists, before anything serves the new code. A release
     # with no published image has nothing to deploy, so moving the schema for it

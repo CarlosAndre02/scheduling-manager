@@ -31,6 +31,14 @@ Every threshold below is chosen so the pipeline stays worth reading. A job that 
 
 That gap is not theoretical: the first scan of this image reported one CRITICAL and six HIGH advisories, all in `brace-expansion`, `ip-address`, `tar` and `undici` — none of them project dependencies. They live in `/usr/local/lib/node_modules/npm/`, shipped by the base image, invisible to `npm audit`, and never loaded by anything at runtime. Removing npm from the runtime stage cleared all seven. The Debian layer itself reported zero.
 
+## The runner's architecture is the image's architecture
+
+`docker build` produces an image for the machine it runs on. A default GitHub runner is x86, the deployment host is Graviton, and an image for the wrong one is accepted by every gate in this pipeline — built, scanned, tested, pushed, pulled — and fails only when the container is started, with an exec format error and a restart loop.
+
+So the jobs that build or run the image use an arm64 runner, which is free for public repositories and native rather than emulated. The jobs that only move bytes do not need one, and `docker load` and `docker push` are indifferent to architecture.
+
+That split is easy to get wrong later, so the image job **asserts the architecture it produced** rather than trusting the runner label to stay correct. It is the only check in the pipeline that would catch a runner being changed back.
+
 ## Supply chain of the pipeline itself
 
 **Every action is pinned by commit SHA**, with the version it corresponds to in a trailing comment. A tag is mutable: whoever owns the action can repoint it at other code, which then runs on the runner with the job's token. A SHA cannot be repointed, so an upgrade becomes a reviewed diff instead of a silent substitution.
