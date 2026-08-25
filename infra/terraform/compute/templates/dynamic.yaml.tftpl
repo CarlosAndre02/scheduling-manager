@@ -1,0 +1,47 @@
+# Watched and reloaded in place, so these are tunable without restarting the
+# proxy or touching the instance.
+#
+# Every limit here runs in the proxy's own memory, on this one host. That has
+# two consequences worth stating: the traffic has already cost bandwidth and CPU
+# by the time a limit rejects it, and the counters are per process — behind a
+# load balancer with several instances, the effective limit multiplies by the
+# number of them.
+
+http:
+  middlewares:
+    rate-limit:
+      rateLimit:
+        average: ${rate_limit_average}
+        period: "1s"
+        # How far a caller may exceed the average before being throttled. A page
+        # that fires several requests on load is normal; a script that keeps
+        # doing it is not.
+        burst: ${rate_limit_burst}
+        sourceCriterion:
+          ipStrategy:
+            # The proxy accepts the connection directly from the client, so the
+            # peer address is the client address. This becomes the number of
+            # proxies in front the day a load balancer or CDN is added, and it
+            # moves together with TRUSTED_PROXY_HOPS in the application —
+            # docs/architecture.md. Getting it wrong in the safe direction
+            # limits per proxy; in the unsafe direction it lets a caller forge
+            # X-Forwarded-For and reset its own counter.
+            depth: 0
+
+    in-flight:
+      inFlightReq:
+        amount: ${in_flight_limit}
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+
+    body-limit:
+      buffering:
+        # The application caps bodies at 10kb of its own accord. This is the
+        # coarser backstop one layer out, so an oversized body is refused before
+        # it reaches Node at all.
+        maxRequestBodyBytes: 16384
+        memRequestBodyBytes: 16384
+
+# Response headers are the application's job — helmet already sets them, and a
+# second source would be a second thing to keep in step.

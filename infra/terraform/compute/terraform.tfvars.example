@@ -1,0 +1,29 @@
+# The commit SHA CI published to ECR. No default: there is no sensible guess,
+# and the wrong one is a deploy of the wrong code.
+image_tag = "0000000000000000000000000000000000000000"
+
+# Leave domain_name empty to bring the stack up without a certificate: the
+# application answers plain HTTP on the Elastic IP, which is enough to prove the
+# machine, the image and the database connection, and is not a state to serve
+# real traffic from. See README.md.
+#
+# domain_name       = "api.example.com"
+# acme_email        = "you@example.com"
+# route53_zone_name = "example.com"
+
+# Switch to false only once the boot is stable. Staging certificates are not
+# trusted by browsers; production allows five duplicate certificates a week.
+# acme_staging = true
+
+# Read database_pool_size off the Supabase pooler configuration. It is divided
+# across app_replicas to derive each container's DATABASE_POOL_MAX.
+#
+# project            = "scheduling-manager"
+# region             = "us-east-1"
+# instance_type      = "t4g.small"
+# root_volume_size   = 20
+# app_replicas       = 2
+# database_pool_size = 15
+# rate_limit_average = 20
+# rate_limit_burst   = 50
+# in_flight_limit    = 20

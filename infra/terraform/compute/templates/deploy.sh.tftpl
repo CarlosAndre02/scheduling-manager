@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#
+# The deploy. Reads what should be running from Parameter Store, brings it up,
+# and is safe to run again with nothing changed.
+#
+#   sudo /opt/app/deploy.sh
+#
+# Remotely, without opening a port or holding a key:
+#
+#   aws ssm send-command --document-name AWS-RunShellScript \
+#     --instance-ids <id> --parameters 'commands=["/opt/app/deploy.sh"]'
+#
+# Deliberately not `set -x`: the database URL passes through this script.
+set -euo pipefail
+
+cd /opt/app
+
+param() {
+  aws ssm get-parameter --region "${region}" --name "$1" --with-decryption \
+    --query Parameter.Value --output text
+}
+
+TAG=$(param "/${project}/image-tag")
+REPLICAS=$(param "/${project}/app-replicas")
+
+# The pooler hands out a fixed number of connections and every container claims
+# a share of it. Deriving the share here, rather than fixing it at boot, means
+# changing the replica count cannot quietly ask for more than the pooler gives.
+POOL_MAX=$(( ${database_pool_size} / REPLICAS ))
+[ "$POOL_MAX" -lt 1 ] && POOL_MAX=1
+
+# Both files are written before the pull, so a failed pull leaves the previous
+# containers running against configuration that still matches them.
+umask 077
+
+# Never echoed, never an argument — a command line is readable by every process
+# on the host.
+printf 'DATABASE_URL=%s\n' "$(param "/${project}/database-url")" > app.env
+
+cat > .env <<ENVFILE
+APP_IMAGE=${registry}/${project}:$TAG
+APP_REPLICAS=$REPLICAS
+DATABASE_POOL_MAX=$POOL_MAX
+ENVFILE
+
+# The token lasts twelve hours, so this runs every deploy rather than once.
+aws ecr get-login-password --region "${region}" \
+  | docker login --username AWS --password-stdin "${registry}"
+
+docker compose pull
+docker compose up -d --remove-orphans
+
+# Layers from replaced images, which otherwise fill the root volume until the
+# disk is the outage.
+docker image prune --force
+
+echo "deployed ${project}:$TAG with $REPLICAS replicas, pool $POOL_MAX each"

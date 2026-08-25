@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# Cloud-init runs this once, on the first boot, and never again. That is why it
+# installs and lays out the machine but decides nothing about what runs: the
+# image tag and the replica count come from Parameter Store at deploy time, so a
+# release does not require a new instance.
+#
+# Output lands in /var/log/cloud-init-output.log. A failure here leaves the
+# instance up with nothing serving, which is the loud direction.
+set -euo pipefail
+
+# ── wait for the address to settle ────────────────────────────────────────────
+# Terraform associates the Elastic IP moments after the instance reaches
+# running, and the swap invalidates the internet gateway's translation for the
+# address it replaces — every connection established through the old one dies.
+# Nothing below should be in flight when that happens.
+
+imds() {
+  local token
+  token=$(curl -fsS -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+  curl -fsS -H "X-aws-ec2-metadata-token: $token" \
+    "http://169.254.169.254/latest/meta-data/$1"
+}
+
+for _ in $(seq 1 60); do
+  [ "$(imds public-ipv4 || true)" = "${elastic_ip}" ] && break
+  sleep 5
+done
+
+# ── docker ────────────────────────────────────────────────────────────────────
+
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'DAEMON'
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" },
+  "live-restore": true
+}
+DAEMON
+
+dnf install -y docker
+
+# Compose is not in the Amazon Linux repositories and has to be placed as a CLI
+# plugin by hand. Pinned by version and verified against a checksum recorded in
+# Terraform, for the same reason the workflow pins its actions by commit SHA: a
+# published artifact can be replaced under an unchanged name.
+install -d -m 0755 /usr/libexec/docker/cli-plugins
+curl -fsSL -o /usr/libexec/docker/cli-plugins/docker-compose \
+  "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-aarch64"
+echo "${compose_sha256}  /usr/libexec/docker/cli-plugins/docker-compose" | sha256sum --check --status
+chmod 0755 /usr/libexec/docker/cli-plugins/docker-compose
+
+systemctl enable --now docker
+
+# ── the application directory ─────────────────────────────────────────────────
+# Every heredoc below is quoted, so the shell expands nothing: these files are
+# already rendered and their own $${...} placeholders belong to Compose.
+
+install -d -m 0755 /opt/app
+
+cat > /opt/app/docker-compose.yaml <<'COMPOSE'
+${compose_yaml}
+COMPOSE
+
+cat > /opt/app/traefik.yaml <<'TRAEFIK'
+${traefik_yaml}
+TRAEFIK
+
+cat > /opt/app/dynamic.yaml <<'DYNAMIC'
+${dynamic_yaml}
+DYNAMIC
+
+cat > /opt/app/deploy.sh <<'DEPLOY'
+${deploy_sh}
+DEPLOY
+chmod 0750 /opt/app/deploy.sh
+
+# ACME refuses to use a storage file that anyone else can read.
+install -d -m 0700 /opt/app/letsencrypt
+touch /opt/app/letsencrypt/acme.json
+chmod 0600 /opt/app/letsencrypt/acme.json
+
+# ── run it ────────────────────────────────────────────────────────────────────
+
+/opt/app/deploy.sh

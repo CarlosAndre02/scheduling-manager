@@ -1,0 +1,91 @@
+# Traefik static configuration. Read once at start: changing it needs the proxy
+# restarted, which is why everything tunable lives in dynamic.yaml instead.
+
+entryPoints:
+  web:
+    address: ":80"
+%{ if tls_enabled ~}
+    # Port 80 answers this redirect and nothing else. The ACME challenge below
+    # is TLS-ALPN-01, which is served on 443, so no plaintext listener ever
+    # returns anything real — see docs/aws-stack-implementation.md.
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+%{ endif ~}
+    transport:
+      respondingTimeouts:
+        # A client that opens a connection and then sends its request one byte
+        # at a time is holding a socket, not making a request. A rate limit
+        # counts requests and never sees this; these ceilings are what does.
+        readTimeout: "15s"
+        writeTimeout: "30s"
+        idleTimeout: "120s"
+%{ if tls_enabled ~}
+
+  websecure:
+    address: ":443"
+    transport:
+      respondingTimeouts:
+        readTimeout: "15s"
+        writeTimeout: "30s"
+        idleTimeout: "120s"
+%{ endif ~}
+
+providers:
+  # Not /var/run/docker.sock. The proxy is the most exposed process on the host,
+  # and the socket is root-equivalent — mounting it read-only does not help,
+  # since creating a privileged container is a POST that a read-only mount does
+  # not forbid. socket-proxy exposes the few read endpoints Traefik needs and
+  # refuses the rest.
+  docker:
+    endpoint: "tcp://socket-proxy:2375"
+    # A container that appears on the network is not published to the internet
+    # by default. It has to ask, on itself, with a label.
+    exposedByDefault: false
+    network: edge
+    watch: true
+
+  file:
+    filename: /etc/traefik/dynamic.yaml
+    # Reloaded in place. This is what lets a limit be re-tuned without a restart
+    # and without touching the instance.
+    watch: true
+%{ if tls_enabled ~}
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "${acme_email}"
+      # Survives a container restart, not an instance replacement — which is
+      # what makes the weekly duplicate-certificate limit an operational
+      # concern rather than a footnote.
+      storage: /letsencrypt/acme.json
+%{ if acme_staging ~}
+      # Staging. The certificate is not trusted by browsers, and that is the
+      # point: its rate limits are high enough to iterate against, where
+      # production allows five a week for an identical set of names and
+      # refills one every 34 hours, so a rebuild loop leaves the name without
+      # a certificate for a day and a half at a time.
+      caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"
+%{ endif ~}
+      tlsChallenge: {}
+%{ endif ~}
+
+# An unauthenticated read of every route, service and middleware on the host.
+# The only thing it buys is convenience.
+api:
+  dashboard: false
+  insecure: false
+
+log:
+  level: INFO
+
+accessLog:
+  filters:
+    # Successful traffic at volume is most of the log and answers nothing a
+    # metric would not. What is worth the disk is what failed.
+    statusCodes:
+      - "400-599"
