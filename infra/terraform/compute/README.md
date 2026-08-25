@@ -29,7 +29,18 @@ There is no Auto Scaling group, no load balancer, no ACM certificate and no WAF.
 
 **The empty mode is for bringing the stack up, not for serving anyone.** It proves the instance boots, the image pulls and the database answers, without needing a domain to exist first. Everything it carries crosses the internet in the clear, including whatever the API returns.
 
-Going from one to the other is a variable and an apply. Nothing about the instance changes except the rendered configuration, so it is worth doing in that order rather than blocking the first apply on a domain purchase.
+Starting without a domain is worth doing rather than blocking the first apply on a domain purchase — but **switching afterwards is not just a variable and an apply.**
+
+Setting `domain_name` re-renders the proxy's configuration and the Compose file, adding the `443` publish, the certificate resolver and the TLS labels. Those files are delivered by user data, and cloud-init runs once. The apply creates the DNS record and changes nothing on the host, so the name resolves to an instance still listening on `80` alone and HTTPS is refused — which reads like a certificate problem and is a delivery problem.
+
+The switch therefore needs the instance rebuilt:
+
+```bash
+terraform apply -var domain_name=api.example.com -var acme_email=you@example.com
+terraform apply -replace=aws_instance.app
+```
+
+Keep `acme_staging = true` across that first rebuild. Confirm a certificate is issued at all before asking a rate-limited authority for a trusted one.
 
 ## Prerequisites
 
@@ -69,6 +80,37 @@ sudo tail -100 /var/log/cloud-init-output.log
 sudo docker compose -f /opt/app/docker-compose.yaml ps
 ```
 
+### What to check, and what each check proves
+
+The checks worth running after an apply are the ones the local exercise in [ec2.md](../../../docs/ec2.md#testing-it-before-it-is-real) structurally cannot reach. Repeating the rest proves nothing: it exercises the same rendered files.
+
+| Check                                                   | Proves                                                       |
+| ------------------------------------------------------- | ------------------------------------------------------------ |
+| `curl <elastic ip>/health`                              | the address association, routing, and container discovery    |
+| `curl <elastic ip>/users/$(uuidgen)` → **404, not 500** | the database round-trip **from the instance**                |
+| `docker compose ps`                                     | every replica running and `healthy`                          |
+| a few 404s, then the proxy log filtered on `:4000`      | requests reaching more than one replica                      |
+| `docker stop` one replica, under traffic                | the drain, the health check and the grace period still agree |
+
+**The second one is the point.** `/health` deliberately does not touch the database, so a healthy instance proves the container started and nothing more. A well-formed but nonexistent id makes the query run without writing anything: `404` means the connection, the TLS configuration and the bundled certificate authority all work over the instance's network path, which is not the one CI used.
+
+**The last one needs its result read before anything else touches the container:**
+
+```bash
+sudo docker inspect -f 'exit={{.State.ExitCode}}' <container>
+sudo docker logs <container> 2>&1 | tail -4
+```
+
+`exit=0` with `Shutdown complete` is the pass. `exit=137` is `SIGKILL` arriving mid-drain, which means `stop_grace_period` no longer covers the drain plus the shutdown timeout.
+
+**Then put the replica back.** `docker stop` marks a container as stopped _by hand_, and `restart: unless-stopped` honours that — so it will not return on its own, and the host is left running on one replica, which is the state two replicas exist to avoid:
+
+```bash
+sudo docker compose -f /opt/app/docker-compose.yaml up -d
+```
+
+That command is also the cheapest demonstration that a deploy is idempotent: it starts what is missing and reports the rest as already running.
+
 ## How a deploy happens
 
 Two steps, and they are separate because they answer different questions.
@@ -84,9 +126,30 @@ The first moves a Parameter Store value. The second runs `/opt/app/deploy.sh` on
 
 `app_replicas` works the same way, and `deploy.sh` derives each container's `DATABASE_POOL_MAX` from `database_pool_size` divided by the replica count, so raising the replicas cannot quietly ask the pooler for more connections than it has.
 
+**Two files, and they are not interchangeable.** `deploy.sh` writes both into `/opt/app`, and confusing them puts a credential where it does not belong:
+
+| File      | Read by                                          | Holds                                     | Reaches the container           |
+| --------- | ------------------------------------------------ | ----------------------------------------- | ------------------------------- |
+| `app.env` | Compose, through `env_file:`                     | `DATABASE_URL`                            | yes, as environment             |
+| `.env`    | Compose, to substitute `${}` in the Compose file | image reference, replica count, pool size | only if named in `environment:` |
+
+`.env` is textual substitution across the whole Compose file, and `docker compose config` prints the result — which is why the credential is not in it.
+
 **A restart drops no requests, and that is not automatic.** The application answers `503` on `/health` while draining, Traefik health-checks that path every five seconds and takes the draining container out of rotation, and the remaining replicas absorb its traffic. It only works because all three agree on the timing: `stop_grace_period` is longer than the drain, or Docker sends `SIGKILL` in the middle of it and the in-flight requests are cut anyway — with an exit code of 137 as the only trace.
 
 ## Managing it
+
+Every change goes through `plan` and `apply`; nothing here is edited in the console, and anything that is will be reverted by the next apply. What differs is the cost of each change, and the plan is the authority — this table is the expectation to check it against.
+
+| Changing                                         | Costs                                                                       |
+| ------------------------------------------------ | --------------------------------------------------------------------------- |
+| `image_tag`, `app_replicas`                      | a parameter; needs `deploy_command` to take effect                          |
+| `instance_type` (within Graviton)                | a stop, a resize and a start — the instance survives                        |
+| `root_volume_size`, upward                       | grown in place                                                              |
+| security groups, `metadata_options`              | in place                                                                    |
+| the templates, `rate_limit_*`, `in_flight_limit` | nothing, until the instance is rebuilt — see below                          |
+| `domain_name`                                    | a DNS record, and nothing on the host — see [the two modes](#the-two-modes) |
+| `subnet_id`                                      | **replaces the instance**                                                   |
 
 **Editing a template does not change a running instance.** `user_data_replace_on_change` is `false`, so Terraform will not destroy the only host because a comment moved. Delivering a bootstrap change is deliberate:
 

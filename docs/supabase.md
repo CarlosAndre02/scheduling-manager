@@ -23,6 +23,36 @@ Supabase exposes the same database three ways, and two of them are wrong for thi
 
 **Session mode is the endpoint to use.** It behaves like a direct connection, over IPv4.
 
+## How many connections you actually get
+
+Two different numbers answer this, and using the wrong one exhausts the pooler with no error that names the cause — new connections simply queue or are refused.
+
+**The Postgres side is deterministic and portable.** It is the same query on any provider, because these are server settings rather than product features:
+
+```sql
+SHOW max_connections;
+SHOW superuser_reserved_connections;
+SELECT count(*) FROM pg_stat_activity;
+```
+
+**The pooler's own ceiling is not, and it is the one that binds.** A pooler holds a small number of server connections and multiplexes clients onto them, so its pool size is far below `max_connections` and is a setting of the product rather than of Postgres:
+
+| Pooler               | Where the number lives                                           |
+| -------------------- | ---------------------------------------------------------------- |
+| Supavisor (Supabase) | Project Settings → Database → Connection Pooling → **Pool Size** |
+| RDS Proxy            | `MaxConnectionsPercent` on the target group                      |
+| PgBouncer, self-run  | `SHOW POOLS;` on the `pgbouncer` admin database                  |
+
+Reading `max_connections` and sizing the application against it is the mistake this section exists to prevent: it is the wrong number by an order of magnitude.
+
+The invariant to hold is that **every container's pool has to fit inside the pooler's**, and the containers multiply:
+
+```
+app_replicas × DATABASE_POOL_MAX  +  migrations  +  administrative sessions  ≤  pool size
+```
+
+The compute stack derives each container's share rather than declaring it, so raising the replica count cannot silently break the inequality — see [ec2.md](ec2.md#how-many-containers).
+
 ## TLS has to be configured in code
 
 Supabase requires TLS, and the connection string it hands out carries `?sslmode=require`. Using it as given is the mistake, for a reason specific to the driver.

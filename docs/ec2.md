@@ -213,6 +213,40 @@ Worth stating plainly, because "firewall" gets used for all of these:
 - **Host firewalls** duplicate the security group and add a second place to get the same rule wrong.
 - **AWS Shield Standard** is free, automatic, and covers volumetric attacks at layers 3 and 4. It does nothing about a flood of well-formed HTTP requests.
 
+## Systems Manager, and what it replaces
+
+Systems Manager is an umbrella over roughly fifteen operational tools rather than one service. Three of them carry this host:
+
+| Tool                | Does                                                        | Used for                                                                                                      |
+| ------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Parameter Store** | hierarchical configuration; `SecureString` is KMS-encrypted | the image tag, the replica count, the database URL                                                            |
+| **Session Manager** | a shell, with no inbound port and no key                    | the only way onto the host                                                                                    |
+| **Run Command**     | executes a script on selected instances                     | the deploy                                                                                                    |
+| Patch Manager       | patch baselines and maintenance windows                     | nothing, which is a gap — see [aws-stack-implementation.md](aws-stack-implementation.md#the-application-host) |
+
+**Secrets Manager is not part of Systems Manager.** It is a separate service with separate pricing, and the confusion matters when choosing between it and Parameter Store:
+
+|                    | Parameter Store    | Secrets Manager                                      |
+| ------------------ | ------------------ | ---------------------------------------------------- |
+| Price              | standard tier free | per secret per month, plus API calls                 |
+| Automatic rotation | none               | built in, with ready-made rotation for AWS databases |
+| Resource policy    | none               | yes — cross-account sharing                          |
+
+Rotation is the only difference that would justify the cost here, and the ready-made rotations target AWS-managed databases. Against a database hosted elsewhere it would have to be written by hand, which leaves nothing being paid for.
+
+### Why not SSH
+
+|              | Session Manager                       | SSH                              |
+| ------------ | ------------------------------------- | -------------------------------- |
+| Inbound port | **none** — the agent connects outward | 22, or a bastion in front        |
+| Credential   | IAM, short-lived                      | a key, valid until it is removed |
+| Revoking it  | remove a permission                   | remove the key from every host   |
+| Audit        | every session in CloudTrail           | whatever was configured          |
+
+The decisive part is the first row: the security group needs no rule for it, so the chain stays at 80 and 443 and nothing else. An SSH rule would need a source, and neither a changing home address nor `0.0.0.0/0` is an answer worth writing down.
+
+**What SSH still wins is the case where the agent is what broke.** Session Manager depends on the agent and on the AWS API being reachable, so its control plane is inside the thing being debugged; `sshd` depends on neither. It also wins on file transfer and on interactive latency. What makes the trade comfortable here is that the host is disposable — a broken agent is a `-replace`, and nothing of value lives on the machine.
+
 ## Deploying
 
 ### The image tag does not live in user data
@@ -228,6 +262,12 @@ A release updates a parameter and runs the deploy script. The machine stays. The
 This is also why `user_data_replace_on_change` is false. Since cloud-init will not re-run regardless, the only question the setting answers is whether Terraform destroys the host to deliver a template edit — and on a single instance that must be a decision, not a side effect.
 
 **Configuration that a running system needs to change under pressure is the exception.** The proxy's dynamic file is watched and reloaded in place, so a limit can be re-tuned in seconds over Session Manager during an incident. Folding the same value back into Terraform afterwards is what keeps the declaration honest.
+
+### Turning TLS on is a rebuild, not a setting
+
+The proxy's configuration and the Compose file are delivered by user data, so the set of ports the proxy publishes is fixed at first boot. Adding a hostname later re-renders both and creates the DNS record, and reaches the running host with neither — the name resolves to an instance that never opened `443`.
+
+This is the same property that makes deploys cheap working against you: what the machine _is_ only changes when the machine is rebuilt. It is worth knowing before the switch rather than during it, because the failure presents as TLS and is not.
 
 ### Draining, and the three timeouts that have to agree
 
