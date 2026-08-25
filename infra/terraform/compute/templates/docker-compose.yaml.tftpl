@@ -1,0 +1,119 @@
+# Rendered by Terraform and written once, at first boot. What changes between
+# deploys is the .env file next to it, not this.
+
+name: ${project}
+
+networks:
+  # Where the proxy reaches the application, and where the application reaches
+  # the internet — the database is on the public internet, so this cannot be an
+  # internal network.
+  edge:
+    name: edge
+
+  # The Docker API, reachable only by the proxy. internal means no route out and
+  # no route in: if the proxy is compromised, the socket proxy is still the only
+  # thing it can talk to here, and the application containers cannot see it at
+  # all.
+  socket:
+    name: socket
+    internal: true
+
+services:
+  socket-proxy:
+    image: ${socket_proxy_image}
+    restart: unless-stopped
+    networks: [socket]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # Every verb off except the reads Traefik needs to discover containers.
+      # POST is what turns a proxy compromise into a host compromise.
+      POST: 0
+      CONTAINERS: 1
+      NETWORKS: 1
+      EVENTS: 1
+      PING: 1
+      VERSION: 1
+
+  traefik:
+    image: ${traefik_image}
+    restart: unless-stopped
+    depends_on: [socket-proxy]
+    networks: [edge, socket]
+    ports:
+      - "80:80"
+%{ if tls_enabled ~}
+      - "443:443"
+%{ endif ~}
+    volumes:
+      - ./traefik.yaml:/etc/traefik/traefik.yaml:ro
+      - ./dynamic.yaml:/etc/traefik/dynamic.yaml:ro
+      - ./letsencrypt:/letsencrypt
+
+  app:
+    image: $${APP_IMAGE}
+    restart: unless-stopped
+    networks: [edge]
+    deploy:
+      replicas: $${APP_REPLICAS}
+
+    # No ports. The application is reachable only across the edge network, so
+    # nothing binds 4000 on the host and the proxy cannot be bypassed locally.
+
+    # Longer than the drain below plus the shutdown timeout the application
+    # allows in-flight work, because Docker's default is 10 seconds and the
+    # drain alone takes 15: SIGKILL would land mid-drain, the process would
+    # never close its listeners, and every request still in flight would be cut
+    # — the exact failure the graceful shutdown exists to prevent. It fails
+    # silently, as an exit code of 137 in a log nobody reads.
+    stop_grace_period: 45s
+
+    # Holds DATABASE_URL, written at deploy time from Parameter Store with mode
+    # 600. Kept apart from .env, which Compose reads for substitution and which
+    # holds nothing secret.
+    env_file:
+      - ./app.env
+
+    environment:
+      NODE_ENV: production
+      SERVER_PORT: "4000"
+
+      # One proxy in front, appending exactly one entry to X-Forwarded-For.
+      # Zero would make every caller look like the proxy; trusting all of them
+      # would let a caller claim any address it likes.
+      TRUSTED_PROXY_HOPS: "1"
+
+      # Shipped in the image at this path. Naming it is an environment decision
+      # so the same image can run against a plaintext database — Dockerfile.
+      DATABASE_SSL_CA: /app/certs/supabase-ca.pem
+
+      # Derived at deploy time from the pooler's ceiling divided by the replica
+      # count, so scaling containers cannot exhaust the pooler.
+      DATABASE_POOL_MAX: "$${DATABASE_POOL_MAX}"
+
+      # Longer than the proxy's health check interval below, deliberately. The
+      # drain only works if the proxy has time to observe /health turning 503
+      # and stop routing here before the socket closes.
+      SHUTDOWN_DRAIN_DELAY_MS: "15000"
+
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: edge
+
+      traefik.http.routers.app.rule: "${router_rule}"
+      traefik.http.routers.app.entrypoints: "${entrypoint}"
+      traefik.http.routers.app.middlewares: "rate-limit@file,in-flight@file,body-limit@file"
+%{ if tls_enabled ~}
+      traefik.http.routers.app.tls: "true"
+      traefik.http.routers.app.tls.certresolver: "letsencrypt"
+%{ endif ~}
+
+      traefik.http.services.app.loadbalancer.server.port: "4000"
+
+      # What makes a rolling restart survivable on a single host: a replica
+      # answering 503 while it drains is taken out of rotation, and the others
+      # absorb its traffic. Without this the proxy keeps sending requests to a
+      # container that is closing.
+      traefik.http.services.app.loadbalancer.healthcheck.path: "/health"
+      traefik.http.services.app.loadbalancer.healthcheck.interval: "5s"
+      traefik.http.services.app.loadbalancer.healthcheck.timeout: "3s"

@@ -50,7 +50,7 @@ The split is what keeps this true. If one stack owned all of it, the plan that i
 
 The point of the split is only real if nothing irreplaceable accumulates on the instance. Three things try to:
 
-- **ACME certificate storage.** A reverse proxy terminating TLS with Let's Encrypt keeps its certificates in a file. Losing it with the instance means requesting new ones, and the **duplicate certificate limit of five per week** turns the sixth rebuild in a week into an outage lasting until the window rolls. Either the file outlives the instance, or the staging endpoint is used while the infrastructure is being iterated.
+- **ACME certificate storage.** A reverse proxy terminating TLS with Let's Encrypt keeps its certificates in a file. Losing it with the instance means requesting new ones, and the **duplicate certificate limit — five a week for an identical set of names, refilling one every 34 hours** — turns a rebuild loop into a name with no certificate for a day and a half at a time. Either the file outlives the instance, or the staging endpoint is used while the infrastructure is being iterated.
 - **The address.** DNS pointing at an auto-assigned public IP makes every replacement a DNS change with propagation to wait on. An Elastic IP makes it a reassociation, and costs the same, since every public IPv4 address is billed either way.
 - **Anything written by hand.** Configuration reaches the instance through environment and parameter store, never through a file edited on the box, or the replacement is not identical and the disposability is imaginary.
 
@@ -108,7 +108,7 @@ What the implementation defends against and what it does not. Every gap here is 
 
 **Egress is unrestricted.** Any process on the instance can reach any host, which is the path a compromised dependency takes to exfiltrate data or call home. It is open deliberately: the alternative is an allowlist covering ECR, Systems Manager, ACME and package mirrors, which is a moving target maintained by hand. AWS managed prefix lists make it tractable, and the trigger is the instance holding customer data rather than test rows.
 
-**Port 80 is open and must serve nothing.** It exists for the redirect to 443 and the ACME HTTP-01 challenge. A plaintext listener that answers anything real is a downgrade path; switching the proxy to the TLS-ALPN-01 challenge closes the port outright.
+**Port 80 is open and must serve nothing.** It exists for the redirect to 443. A plaintext listener that answers anything real is a downgrade path, and the `TLS-ALPN-01` challenge keeps the ACME exchange on 443 so the port has no second job — closing it outright costs only the convenience of anyone who typed `http://`.
 
 **Nothing rate limits ahead of the instance.** A reverse proxy's rate limiting runs in the instance's own process, so an attack has already spent its bandwidth and CPU by the time a limit applies. Absorbing traffic before it arrives is what a load balancer with WAF rate rules buys.
 
@@ -117,3 +117,25 @@ What the implementation defends against and what it does not. Every gap here is 
 **There is no network-level record.** CloudTrail answers what was called on the AWS API, never what connected to what. Flow logs answer the second question and are off for cost, which means an investigation into a suspected intrusion starts with no packet history.
 
 **The emptied default group fails closed, and confusingly.** Anything created without an explicit security group lands in the default one, which now permits nothing. That is the safe direction, but the symptom is a resource that times out rather than one that reports a denial.
+
+### The application host
+
+**Nothing patches the operating system.** Amazon Linux locks its repositories to the version of the image the instance launched from, so `dnf update` pulls nothing newer without being told a release version, and `ignore_changes = [ami]` stops Terraform rolling the image forward. The package set is therefore frozen at launch and stays frozen. Two things close it: Patch Manager applying updates in place on a schedule, or replacing the instance onto a current image periodically. Neither happens by itself, and the symptom of neither happening is silence.
+
+**The host's role is the database credential.** The metadata hop limit of 1 keeps containers away from the instance's credentials, which is what stops a compromised application from reading them. It does nothing for the host: any code execution outside a container inherits a role that can read the project's parameters. The boundary is the container, not the machine.
+
+**The credential rests on disk and in every replica's environment.** It is written mode 600 and owned by root, which stops another user reading the file — and `docker inspect` still prints the environment to anyone in the docker group, as does `/proc/<pid>/environ` to root. Docker has no secret mount outside Swarm, so this is the floor rather than a shortcut past a better option.
+
+**A container escape from the proxy lands as root on the host.** The socket proxy closes the easy path, and the hard path is untouched: containers run with the default capability set, a writable root filesystem, no `no-new-privileges`, and no user-namespace remapping — and the proxy's own process runs as root inside its container because it binds privileged ports. Dropping capabilities and mounting the root filesystem read-only are cheap; they are absent, not ruled out.
+
+**Infrastructure images are pinned by tag, not by digest.** The workflow pins its actions by commit SHA precisely because a tag can be repointed by whoever owns it, and the same argument applies here with more force — one of these images belongs to a third party and runs adjacent to the Docker socket. The Compose binary is pinned by checksum and is the shape the others should take.
+
+**Plaintext is a supported mode, not an error state.** Bringing the stack up without a hostname produces a working endpoint with no transport security at all, and nothing distinguishes it from a finished one except reading the URL. What makes it safe is that it is temporary; nothing enforces that.
+
+**The TLS floor is a default nobody declared.** No options block sets a minimum protocol version or a cipher list, so the floor is whatever the proxy ships with — which is a reasonable value and a moving one, changing when the proxy is upgraded rather than when anyone decides.
+
+**Rate limiting keys on an identifier the caller chooses.** Per-address limits are bypassed by spreading the source and are shared by everyone behind one NAT. On a burstable instance the consequence is not only slowness: absorbed traffic above the baseline is billed as surplus CPU, so a flood converts into an invoice even when it is served successfully. A spending alarm is the detection, which makes it the wrong instrument arriving late.
+
+**An investigation would start with almost nothing.** The access log keeps 4xx and 5xx, so data taken through requests that returned 200 leaves no record; container logs are capped and never shipped, so a replaced instance takes its history with it. This is the right trade for a disk and the wrong one for an incident, and the trigger for reversing it is the first real customer record entering the database.
+
+**A deploy is remote code execution gated only by IAM.** Run Command executes the deploy script as root, and the parameter that names the image decides what runs. Anyone holding both permissions can put any image CI ever published onto the host, without a review step or an approval. The bound is what is in that one repository; there is no second one.
