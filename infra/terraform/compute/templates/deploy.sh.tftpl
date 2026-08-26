@@ -5,10 +5,10 @@
 #
 #   sudo /opt/app/deploy.sh
 #
-# Remotely, without opening a port or holding a key:
+# Remotely, without opening a port or holding a key, and with the checks around
+# it that a release needs:
 #
-#   aws ssm send-command --document-name AWS-RunShellScript \
-#     --instance-ids <id> --parameters 'commands=["/opt/app/deploy.sh"]'
+#   scripts/release.sh <sha>
 #
 # Deliberately not `set -x`: the database URL passes through this script.
 set -euo pipefail
@@ -50,8 +50,50 @@ aws ecr get-login-password --region "${region}" \
 docker compose pull
 docker compose up -d --remove-orphans
 
-# Layers from replaced images, which otherwise fill the root volume until the
-# disk is the outage.
+# `up -d` returns once the containers exist, which is not the same as the
+# application answering. The difference has already shipped a broken release:
+# an image built for the wrong architecture is created, dies in milliseconds,
+# restarts forever, and every step before this one reports success — the only
+# symptom being a bare 404 from a proxy with no backend. The image declares a
+# HEALTHCHECK, so the host can tell "started" from "working".
+readonly HEALTH_TIMEOUT=120
+
+settled() {
+  local waited=0 ids healthy
+
+  while [ "$waited" -lt "$HEALTH_TIMEOUT" ]; do
+    ids=$(docker compose ps --quiet app)
+
+    # Unquoted on purpose: one id per replica, and each has to become an
+    # argument of its own.
+    healthy=$(docker inspect --format '{{.State.Health.Status}}' $ids 2>/dev/null \
+      | grep -c '^healthy$' || true)
+
+    [ "$healthy" -ge "$REPLICAS" ] && return 0
+
+    sleep 5
+    waited=$(( waited + 5 ))
+  done
+
+  return 1
+}
+
+# Deliberately not a revert. Rolling back from here would be guessing at a cause
+# this script cannot see: a database that is unreachable fails the health check
+# of every image equally, and the host would flip between two perfectly good
+# releases while the real fault goes unreported. Failing is louder, and the way
+# back is one command from a person who knows which one it is.
+if ! settled; then
+  echo "deploy failed: ${project}:$TAG never reported $REPLICAS healthy containers" >&2
+  echo "the previous release is no longer running — roll back with scripts/release.sh" >&2
+  docker compose ps >&2
+  docker compose logs --tail 50 app >&2
+  exit 1
+fi
+
+# Only once the release is known good, and only dangling layers: the previous
+# release keeps its tag and therefore survives this, which is what makes a
+# rollback a pull from the local disk rather than from the registry.
 docker image prune --force
 
 echo "deployed ${project}:$TAG with $REPLICAS replicas, pool $POOL_MAX each"

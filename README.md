@@ -65,7 +65,22 @@ Every one of them has a local equivalent, so a red pipeline is reproducible with
 
 Two further jobs run only on `main`, after all four pass. `publish` pushes the image the `image` job already built and tested to ECR, tagged by commit and authenticated with a short-lived token rather than a stored key; `migrate` then applies pending schema changes from that same image.
 
-Why each gate sits where it does, and how Dependabot feeds it, is in [docs/ci-cd.md](docs/ci-cd.md).
+## Releasing
+
+Installing a release is a separate, manually triggered workflow — [.github/workflows/deploy.yml](.github/workflows/deploy.yml) — because a merge is a statement about the code and a deploy is a statement about right now. With one instance and no load balancer, a bad release is an outage until a person reverses it.
+
+The release itself is a **name**: the commit SHA, held in Parameter Store. The instance never knows which version it is, it asks — so deploying and rolling back are the same operation with different values, and the way back is a path every deploy exercises.
+
+```bash
+scripts/release.sh --list     # what the registry holds, and what is released now
+scripts/release.sh <sha>      # deploy, or roll back
+```
+
+The workflow calls that same script rather than reimplementing it. On the instance, the deploy refuses to report success until the containers report healthy — `docker compose up -d` returning is not evidence that anything answers.
+
+What a rollback does **not** undo — the schema above all — is in [docs/rollback.md](docs/rollback.md).
+
+Why each gate sits where it does, how a release reaches the host, and how Dependabot feeds it, is in [docs/ci-cd.md](docs/ci-cd.md).
 
 ## Infrastructure
 
@@ -116,7 +131,8 @@ Use cases depend on repository _interfaces_, never on Drizzle, so the domain has
 
 - [docs/architecture.md](docs/architecture.md) — layering, DI, error model, process lifecycle, database design
 - [docs/api.md](docs/api.md) — HTTP contract, environment variables, migrations, deployment notes
-- [docs/ci-cd.md](docs/ci-cd.md) — the pipeline: what runs on every push and why
+- [docs/ci-cd.md](docs/ci-cd.md) — the pipeline: what runs on every push, and how a release reaches the instance
+- [docs/rollback.md](docs/rollback.md) — going back: what a rollback undoes, what it cannot, and the schema discipline that keeps it available
 - [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail
 - [docs/aws-stack-implementation.md](docs/aws-stack-implementation.md) — how the infrastructure is split into stacks, and in which order
 - [docs/vpc.md](docs/vpc.md) — VPC, subnets, availability zones, egress options, security groups

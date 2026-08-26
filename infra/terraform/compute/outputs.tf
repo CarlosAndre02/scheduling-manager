@@ -18,7 +18,12 @@ output "connect_command" {
   value       = "aws ssm start-session --region ${var.region} --target ${aws_instance.app.id}"
 }
 
+output "deploy_document" {
+  description = "The only document the CI role may send to this instance. scripts/release.sh and the deploy workflow both name it."
+  value       = aws_ssm_document.deploy.name
+}
+
 output "deploy_command" {
-  description = "Applies whatever the image-tag parameter currently says. Run it after any apply that changed image_tag or app_replicas — Terraform moves the parameter, this moves the containers."
-  value       = "aws ssm send-command --region ${var.region} --document-name AWS-RunShellScript --instance-ids ${aws_instance.app.id} --parameters 'commands=[\"/opt/app/deploy.sh\"]'"
+  description = "Installs whatever the image-tag parameter currently says, without waiting for the result. scripts/release.sh is the same call plus the wait and the checks around it."
+  value       = "aws ssm send-command --region ${var.region} --document-name ${aws_ssm_document.deploy.name} --targets 'Key=tag:Name,Values=${var.project}-app'"
 }

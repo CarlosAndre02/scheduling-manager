@@ -6,18 +6,18 @@ The scope is deliberate. This is the only stack a compromised CI credential can 
 
 ## What it creates
 
-| Resource          | Effect                                                                                 |
-| ----------------- | -------------------------------------------------------------------------------------- |
-| ECR repository    | image destination, with **immutable tags** and scan-on-push                            |
-| Lifecycle policy  | expires untagged images after `untagged_retention_days`, keeps `image_retention_count` |
-| OIDC provider     | trust anchor for GitHub's token issuer                                                 |
-| IAM role + policy | assumable only by one repository and branch; may push to this one repository           |
+| Resource          | Effect                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| ECR repository    | image destination, with **immutable tags** and scan-on-push                             |
+| Lifecycle policy  | expires untagged images after `untagged_retention_days`, keeps `image_retention_count`  |
+| OIDC provider     | trust anchor for GitHub's token issuer                                                  |
+| IAM role + policy | assumable only by one repository and branch; may push to this repository and release it |
 
 **Cost: cents.** ECR storage is billed per GB and layers are shared between images, so successive builds of the same base add little. Pulling from the registry into the same region is free. The OIDC provider and the role cost nothing.
 
 ## Immutable tags change how deploys work
 
-The registry refuses a second push of a tag that already exists. A tag therefore always names the same bytes, which is what makes a rollback a lookup rather than a rebuild.
+The registry refuses a second push of a tag that already exists. A tag therefore always names the same bytes, which is what makes a rollback a lookup rather than a rebuild — see [docs/rollback.md](../../../docs/rollback.md).
 
 The consequence to plan around: **a moving `latest` cannot exist here**, because the setting is repository-wide. Which image is deployed has to be recorded by the deploy — a task definition, a release file on the instance — and never by a tag that moves underneath it. That is the property that makes a release reproducible, not a limitation to work around.
 
@@ -86,11 +86,13 @@ The publishing side lives in [.github/workflows/ci.yml](../../../.github/workflo
 
 **Changing the retention count** takes effect on the next evaluation, which runs asynchronously within roughly a day. Lowering it deletes images immediately eligible under the new number — check what would be lost before applying a reduction.
 
-**Adding a permission** means editing `ci_permissions` in [oidc.tf](oidc.tf). Resist `ecr:*`: the actions listed are the push path, and each one that is not there is one a leaked token cannot perform.
+**Adding a permission** means editing `ci_permissions` in [oidc.tf](oidc.tf). Resist `ecr:*` and `ssm:*`: the actions listed are the push path plus exactly the calls [scripts/release.sh](../../../scripts/release.sh) makes on a deploy, and each one that is not there is one a leaked token cannot perform. Its `--list` mode is deliberately outside that set — reading the release history is an operator's task, not the pipeline's.
+
+**The release permission is the one to read twice.** `ssm:SendCommand` names the `<project>-deploy` document, which takes no arguments — the same action on the AWS-owned `AWS-RunShellScript` accepts the command as a parameter and is a root shell on the instance. It is also split across two statements: SendCommand authorises the document and each target instance separately, so the tag condition that scopes the instances would be evaluated against the document too and deny every deploy.
 
 **Allowing releases from tags** means a second `sub` value such as `repo:owner/repo:ref:refs/tags/v*`, which needs `StringLike` rather than `StringEquals`. Widen the test only for the value that requires it, and never for the repository segment.
 
-**Requiring a human before deploy** means pointing `sub` at a GitHub environment (`repo:owner/repo:environment:production`) instead of a branch. An environment can demand manual approval, so the token is not issued at all until someone approves.
+**Requiring a human before deploy** means pointing `sub` at a GitHub environment (`repo:owner/repo:environment:production`) instead of a branch. An environment can demand manual approval, so the token is not issued at all until someone approves. It is a swap and not an addition: a job declaring an environment stops carrying the branch in its subject, so the branch rule has to move to the environment's deployment branch policy in the same change or it stops existing.
 
 **Tearing it down** fails while the repository holds images, which is the useful default — `force_delete` is off. Deleting the OIDC provider breaks every workflow in every repository that trusts it, so confirm nothing else uses it before destroying.
 
@@ -99,5 +101,7 @@ The publishing side lives in [.github/workflows/ci.yml](../../../.github/workflo
 **Scan-on-push is not a replacement for the Trivy job.** ECR basic scanning covers operating system packages only. Language dependencies need enhanced scanning through Amazon Inspector, which is billed per image. The CI job covers both today, so this is a free second signal rather than the primary control.
 
 **Nothing here pulls.** The instance that runs the image needs read access of its own, granted through an instance profile in the stack that creates it — not by widening this role.
+
+**Nothing here defines the deploy.** The role may send the deploy document; the document and the script it runs belong to the [compute](../compute) stack. The ARN is built from the naming convention rather than looked up, because compute is applied after this stack and a data source would be a dependency in the wrong direction — renaming the document there means editing the convention here.
 
 **No cross-account access.** That would be a repository policy on the registry rather than an IAM policy on the role, and it only arises with a second account in the picture.

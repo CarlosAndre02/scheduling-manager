@@ -80,9 +80,9 @@ resource "aws_instance" "app" {
   # gateway there is no other route out, and user data has packages to fetch.
   associate_public_ip_address = true
 
-  # Compressed, not because 14 kB is large but because EC2 caps user data at
-  # 16 kB and the rendered script sits at 86% of it — close enough that adding a
-  # comment would fail the apply, with an error that names a size and not a
+  # Compression is a requirement, not an optimisation: EC2 caps user data at
+  # 16 kB before base64 and the rendered script no longer fits uncompressed.
+  # Without this the apply fails with an error that names a size and not a
   # cause. Cloud-init detects the gzip magic and decompresses before running,
   # so nothing on the instance has to know. This costs the plan its readable
   # diff, which the rendered templates in the repository already provide.

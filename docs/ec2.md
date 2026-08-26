@@ -257,11 +257,21 @@ Cloud-init runs user data **once**, on the first boot. Anything baked into it ca
 | ------------------------------------------------------ | ----------------------------------------- |
 | what the machine _is_ — packages, layout, config files | what it _runs_ — image tag, replica count |
 
-A release updates a parameter and runs the deploy script. The machine stays. The same two calls are what a CD job would make.
+A release updates a parameter and runs the deploy script. The machine stays. Both calls are what [scripts/release.sh](../scripts/release.sh) makes, from a terminal or from the deploy workflow — [ci-cd.md](ci-cd.md#deploying) covers the ordering.
 
 This is also why `user_data_replace_on_change` is false. Since cloud-init will not re-run regardless, the only question the setting answers is whether Terraform destroys the host to deliver a template edit — and on a single instance that must be a decision, not a side effect.
 
 **Configuration that a running system needs to change under pressure is the exception.** The proxy's dynamic file is watched and reloaded in place, so a limit can be re-tuned in seconds over Session Manager during an incident. Folding the same value back into Terraform afterwards is what keeps the declaration honest.
+
+### A deploy that succeeds is not a release that works
+
+`docker compose up -d` returns once the containers have been **created**. Creation is not startup, startup is not readiness, and the gap between them has already produced a silent failure: an image built for the wrong architecture is created successfully, exits in milliseconds, and is restarted forever by the restart policy. Every step before it reports success, and the only symptom is a bare `404` from a proxy that has no backend to route to.
+
+So `deploy.sh` waits for the image's own `HEALTHCHECK` to report as many healthy containers as there are replicas, and exits non-zero if it does not within two minutes. The signal has to come from the container, because every cheaper signal — the exit code of `up -d`, the container existing, the process running — was already true in that failure.
+
+**Why the gate lives on the host and not in the deploy workflow.** A check in the workflow only guards the path through the workflow. The same script is what runs at first boot and what an operator runs over Session Manager, and a release installed either of those ways deserves the same verdict.
+
+**It does not roll back.** Reverting automatically would be guessing at a cause the script cannot observe: an unreachable database fails the health check of every image equally, and the host would flip between two perfectly good releases while the actual fault goes unreported. The failure message names the command that goes back — [rollback.md](rollback.md) covers what that command reaches and what it leaves behind.
 
 ### Turning TLS on is a rebuild, not a setting
 
@@ -360,4 +370,4 @@ The last one is the check worth keeping. Run continuous requests against a **rea
 
 ### What this cannot cover
 
-Rendering and running locally exercises the proxy, the limits, the labels and the shutdown path. It says nothing about IAM, the instance profile, cloud-init, the Elastic IP association, or whether user data fits the **16 kB limit EC2 imposes before base64 encoding** — which the rendered script approaches closely enough that compressing it is not an optimisation but a requirement. Cloud-init decompresses gzipped user data on its own, so the cost is only a plan diff that no longer shows the script.
+Rendering and running locally exercises the proxy, the limits, the labels and the shutdown path. It says nothing about IAM, the instance profile, cloud-init, the Elastic IP association, or whether user data fits the **16 kB limit EC2 imposes before base64 encoding** — which the rendered script exceeds, making compression a requirement rather than an optimisation. Cloud-init decompresses gzipped user data on its own, so the cost is only a plan diff that no longer shows the script.

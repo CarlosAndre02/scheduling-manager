@@ -124,4 +124,4 @@ One detail carries over unchanged: **migrations must run with the statement time
 docker run --rm -e DATABASE_STATEMENT_TIMEOUT_MS=0 <image> node dist/shared/database/migrate.js
 ```
 
-Backward compatibility between the schema and the previous release is unaffected by the change of provider — see [api.md](api.md#rollback-and-schema-compatibility).
+Backward compatibility between the schema and the previous release is unaffected by the change of provider — see [rollback.md](rollback.md#the-schema-only-moves-forward).

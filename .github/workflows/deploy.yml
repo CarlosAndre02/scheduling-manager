@@ -1,0 +1,63 @@
+name: Deploy
+
+# Manual, deliberately. There is one instance and no load balancer in front of
+# it, so a bad release is an outage until a person reverses it. Merging is a
+# statement about the code; deploying is a statement about right now, and the
+# pipeline should not conflate them.
+#
+# Rolling back is this same workflow with an older SHA. There is no second path,
+# which is what keeps the rollback path from being the one nobody has run.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Commit SHA to release. Leave blank to deploy the head of the branch selected above."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# Two deploys interleaving `up -d` on the same host leave an indeterminate
+# release, so this queues instead of cancelling — a half-applied deploy is worse
+# than a late one.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Release to production
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No `environment:` on this job, and that is load-bearing rather than an
+      # omission: referencing one changes the OIDC subject to
+      # `repo:owner/repo:environment:name`, and the trust policy pins the
+      # subject to `ref:refs/heads/main`. Adding an environment without also
+      # widening that policy fails at STS with a message about no identity.
+      #
+      # The same pin is a second gate here for free — dispatching this workflow
+      # from a feature branch cannot obtain credentials at all.
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # The same script an operator runs from a terminal. A workflow that
+      # reimplemented it would be a second definition of "deploy" to drift from
+      # the first, and the drift would only ever be discovered during an
+      # incident.
+      #
+      # A blank input resolves to the head of the dispatched branch. A SHA that
+      # was never published is refused by the script before the parameter moves.
+      - name: Release
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+        run: scripts/release.sh "$IMAGE_TAG"
