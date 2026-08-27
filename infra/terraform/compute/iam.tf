@@ -32,8 +32,8 @@ resource "aws_iam_role_policy_attachment" "ssm_core" {
 
 data "aws_iam_policy_document" "instance_permissions" {
   # Account-level and resource-less, exactly as in the CI role: this is the call
-  # `docker login` makes, and scoping it to a repository fails at login with a
-  # message that never names the repository.
+  # the credential helper makes to mint a registry token, and scoping it to a
+  # repository fails with a message that never names the repository.
   statement {
     sid       = "AuthenticateToRegistry"
     effect    = "Allow"

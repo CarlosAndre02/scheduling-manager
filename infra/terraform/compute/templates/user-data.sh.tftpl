@@ -39,7 +39,12 @@ cat > /etc/docker/daemon.json <<'DAEMON'
 }
 DAEMON
 
-dnf install -y docker
+# The credential helper is why no `docker login` runs anywhere: it fetches a
+# registry token from the instance role on each pull, so nothing is stored.
+# `docker login` writes the token to /root/.docker/config.json in base64, which
+# Docker warns about on every deploy — a weak credential, since it is pull-only
+# and expires in twelve hours, but one with no reason to exist on disk.
+dnf install -y docker amazon-ecr-credential-helper
 
 # Compose is not in the Amazon Linux repositories and has to be placed as a CLI
 # plugin by hand. Pinned by version and verified against a checksum recorded in
@@ -52,6 +57,22 @@ echo "${compose_sha256}  /usr/libexec/docker/cli-plugins/docker-compose" | sha25
 chmod 0755 /usr/libexec/docker/cli-plugins/docker-compose
 
 systemctl enable --now docker
+
+# credHelpers and not credsStore: the latter routes *every* registry through
+# this helper, including Docker Hub, where it has no credential to offer and
+# fails the pull of the proxy images. Scoped to the one registry that needs it.
+#
+# The helper runs on the host, so it reaches the instance metadata service in
+# one hop. Inside a container it would be two, and the hop limit is 1.
+install -d -m 0700 /root/.docker
+cat > /root/.docker/config.json <<'DOCKERCONFIG'
+{
+  "credHelpers": {
+    "${registry}": "ecr-login"
+  }
+}
+DOCKERCONFIG
+chmod 0600 /root/.docker/config.json
 
 # ── the application directory ─────────────────────────────────────────────────
 # Every heredoc below is quoted, so the shell expands nothing: these files are

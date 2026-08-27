@@ -15,6 +15,14 @@ set -euo pipefail
 
 cd /opt/app
 
+# Named rather than inherited. Docker resolves its configuration through $HOME,
+# and this script runs from two places — cloud-init at first boot and Run
+# Command on every deploy — with no guarantee both set the same one. Getting it
+# wrong means the credential helper is never consulted and the pull fails with
+# "no basic auth credentials", which reads like a permissions problem and is a
+# path problem.
+export DOCKER_CONFIG=/root/.docker
+
 param() {
   aws ssm get-parameter --region "${region}" --name "$1" --with-decryption \
     --query Parameter.Value --output text
@@ -43,11 +51,15 @@ APP_REPLICAS=$REPLICAS
 DATABASE_POOL_MAX=$POOL_MAX
 ENVFILE
 
-# The token lasts twelve hours, so this runs every deploy rather than once.
-aws ecr get-login-password --region "${region}" \
-  | docker login --username AWS --password-stdin "${registry}"
-
-docker compose pull
+# No `docker login`. The ECR credential helper installed at boot hands Docker a
+# token from the instance role when a pull needs one, so nothing is written to
+# disk and nothing expires between deploys.
+#
+# --quiet because the progress lines are one per layer, and Run Command returns
+# a bounded slice of the output: unquieted, the pull scrolls the line that says
+# what was deployed out of the response, leaving a successful deploy with no
+# readable evidence of what it installed.
+docker compose pull --quiet
 docker compose up -d --remove-orphans
 
 # `up -d` returns once the containers exist, which is not the same as the

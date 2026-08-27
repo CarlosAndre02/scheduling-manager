@@ -23,6 +23,9 @@ locals {
     compose_version = local.compose_version
     compose_sha256  = local.compose_sha256
 
+    # Names the one registry the credential helper answers for.
+    registry = local.registry
+
     compose_yaml = templatefile("${path.module}/templates/docker-compose.yaml.tftpl", {
       project            = var.project
       traefik_image      = local.traefik_image
