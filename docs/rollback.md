@@ -124,4 +124,4 @@ Two things never provide this guarantee. Down migrations are a local convenience
 
 **The fault is in the data, not the code.** Every release behaves identically on a bad row, so going back changes nothing and costs a deploy.
 
-**The fault is outside the release.** An unreachable database, an exhausted pooler and a saturated instance fail every image equally. This is why the deploy does not revert on its own: the health gate cannot distinguish "this release is broken" from "nothing would work right now", and a machine that flips between two good releases has hidden the actual fault rather than fixed it.
+**The fault is outside the release.** An unreachable database, an exhausted pooler and a saturated instance fail every image equally — and the deploy gate reaches the database on purpose, so it reports all of them as a failed release. This is why the deploy does not revert on its own: the gate cannot distinguish "this release is broken" from "nothing would work right now", and a machine that flips between two good releases has hidden the actual fault rather than fixed it.

@@ -7,6 +7,7 @@ import { meetingRouter } from "./modules/meeting/routes";
 import { schedulingRouter } from "./modules/scheduling/routes";
 import { errorHandler, notFoundHandler } from "./shared/core/errorHandler";
 import { isShuttingDown } from "./shared/core/lifecycle";
+import { isDatabaseReachable } from "./shared/database/probe";
 
 const app = express();
 
@@ -58,6 +59,18 @@ app.get("/", (_req: Request, res: Response) => {
   res.json({ message: "Hello World!" });
 });
 
+// Two probes, and the split is by consumer rather than by taste.
+//
+// The load balancer polls /health, which reports this process and nothing else.
+// A dependency-aware check there would take every replica out of rotation the
+// moment the database blinked, leaving the proxy with no backend and its own
+// bare error in place of the application's — a degraded database escalated into
+// a total outage, with a worse error surface.
+//
+// The deploy gate polls /ready, through the image's HEALTHCHECK, because the
+// question it asks is different: not "is this process up" but "can this release
+// do its job". Nothing acts on an unhealthy container at runtime, so a database
+// outage shows up as an honest `unhealthy` and changes no routing.
 app.get("/health", (_req: Request, res: Response) => {
   // While draining, report unhealthy so the load balancer deregisters this
   // instance before its in-flight connections are closed.
@@ -70,6 +83,25 @@ app.get("/health", (_req: Request, res: Response) => {
   return res
     .status(200)
     .json({ status: "OK", timestamp: new Date().toISOString() });
+});
+
+app.get("/ready", async (_req: Request, res: Response) => {
+  // A superset of /health, so a draining container is not ready either — and
+  // answers without a round-trip, since the verdict is already known.
+  if (isShuttingDown()) {
+    return res
+      .status(503)
+      .json({ status: "SHUTTING_DOWN", timestamp: new Date().toISOString() });
+  }
+
+  const ready = await isDatabaseReachable();
+
+  // No reason in the body. This path is publicly reachable, and what acts on it
+  // needs a status code rather than a description of what the database is doing.
+  return res.status(ready ? 200 : 503).json({
+    status: ready ? "READY" : "NOT_READY",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.use(userRouter);

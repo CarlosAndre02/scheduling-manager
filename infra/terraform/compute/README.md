@@ -85,16 +85,18 @@ sudo docker compose -f /opt/app/docker-compose.yaml ps
 
 The checks worth running after an apply are the ones the local exercise in [ec2.md](../../../docs/ec2.md#testing-it-before-it-is-real) structurally cannot reach. Repeating the rest proves nothing: it exercises the same rendered files.
 
-| Check                                                   | Proves                                                       |
-| ------------------------------------------------------- | ------------------------------------------------------------ |
-| `curl <elastic ip>/health`                              | the address association, routing, and container discovery    |
-| `curl <elastic ip>/users/$(uuidgen)` → **404, not 500** | the database round-trip **from the instance**                |
-| `docker compose ps`                                     | every replica running and `healthy`                          |
-| a few 404s, then the proxy log filtered on `:4000`      | requests reaching more than one replica                      |
-| `docker stop` one replica, under traffic                | the drain, the health check and the grace period still agree |
-| `scripts/release.sh <the tag already running>`          | the whole release path, without changing what is running     |
+| Check                                              | Proves                                                       |
+| -------------------------------------------------- | ------------------------------------------------------------ |
+| `curl <elastic ip>/health`                         | the address association, routing, and container discovery    |
+| `curl <elastic ip>/ready` → **200**                | the database round-trip **from the instance**                |
+| `docker compose ps`                                | every replica running and `healthy`                          |
+| a few 404s, then the proxy log filtered on `:4000` | requests reaching more than one replica                      |
+| `docker stop` one replica, under traffic           | the drain, the health check and the grace period still agree |
+| `scripts/release.sh <the tag already running>`     | the whole release path, without changing what is running     |
 
-**The second one is the point.** `/health` deliberately does not touch the database, so a healthy instance proves the container started and nothing more. A well-formed but nonexistent id makes the query run without writing anything: `404` means the connection, the TLS configuration and the bundled certificate authority all work over the instance's network path, which is not the one CI used.
+**The second one is the point.** `/health` deliberately does not touch the database, so an answering instance proves the container started and nothing more. `/ready` runs `SELECT 1` through the application's own pool: `200` means the connection, the TLS configuration and the bundled certificate authority all work over the instance's network path, which is not the one CI used.
+
+It is also the signal the deploy gates on, so a `200` here and a successful deploy are the same evidence — which makes this check a confirmation rather than a discovery. `curl <elastic ip>/users/$(uuidgen)` → **404, not 500** remains the stronger version, since it exercises a real query through the ORM rather than a bare round-trip.
 
 **The last one needs its result read before anything else touches the container:**
 

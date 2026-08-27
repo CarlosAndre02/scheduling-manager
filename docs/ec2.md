@@ -269,6 +269,8 @@ This is also why `user_data_replace_on_change` is false. Since cloud-init will n
 
 So `deploy.sh` waits for the image's own `HEALTHCHECK` to report as many healthy containers as there are replicas, and exits non-zero if it does not within two minutes. The signal has to come from the container, because every cheaper signal — the exit code of `up -d`, the container existing, the process running — was already true in that failure.
 
+**That health check asks `/ready`, not `/health`.** Liveness was already true in the architecture failure and would be true again for the next likely one: a wrong credential, an unreachable pooler, a certificate authority the image cannot verify. A release that cannot reach its database is a release that answers `500` to everything real, and the gate has to be able to see that. The load balancer keeps polling `/health` — pointing it at a dependency-aware check would take every replica out of rotation over a blip. [api.md](api.md#liveness-and-readiness) covers the split.
+
 **Why the gate lives on the host and not in the deploy workflow.** A check in the workflow only guards the path through the workflow. The same script is what runs at first boot and what an operator runs over Session Manager, and a release installed either of those ways deserves the same verdict.
 
 **It does not roll back.** Reverting automatically would be guessing at a cause the script cannot observe: an unreachable database fails the health check of every image equally, and the host would flip between two perfectly good releases while the actual fault goes unreported. The failure message names the command that goes back — [rollback.md](rollback.md) covers what that command reaches and what it leaves behind.
@@ -351,13 +353,14 @@ Then, in a directory holding the rendered `docker-compose.yaml`, `traefik.yaml` 
 docker compose up -d
 ```
 
-`/health` does not touch the database, so the stack comes up healthy against an unreachable one.
+`/health` does not touch the database, so the stack comes up serving against an unreachable one. `/ready` does, so the containers report `unhealthy` — which is the correct answer locally and the reason a real deploy would have failed.
 
 ### What each check proves
 
 | Check                                                                 | Proves                                                          |
 | --------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `curl localhost/health`                                               | routing and label discovery                                     |
+| `curl localhost/ready`                                                | the database round-trip, and the signal the deploy gate reads   |
 | repeated 404s, then `docker compose logs traefik` filtered on `:4000` | requests are spread across replicas                             |
 | 150 fast requests at once                                             | the rate limit throttles, and the bucket refills after a pause  |
 | 25 slow uploads (`curl --limit-rate`), kept under the burst           | the in-flight limit fires exactly where the rate limit cannot   |

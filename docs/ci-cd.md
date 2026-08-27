@@ -179,6 +179,8 @@ The wait is hand-written because `aws ssm wait command-executed` is a fixed twen
 
 So `deploy.sh` waits for the image's own `HEALTHCHECK` to report as many healthy containers as there are replicas, and exits non-zero if it does not. Putting it there rather than in the workflow means a deploy run by hand over Session Manager is gated identically.
 
+**That check asks `/ready`, which reaches the database.** Liveness alone was already true during the architecture failure, and would be true again for the next likely one — a wrong credential, an unreachable pooler, a certificate authority the image cannot verify. The load balancer keeps polling `/health`, because a dependency-aware check on the routing path pulls every replica over a blip. [api.md](api.md#liveness-and-readiness) covers the split.
+
 **It does not roll back on its own.** An automatic revert would guess at a cause the script cannot see: an unreachable database fails the health check of every image equally, and the host would flip between two perfectly good releases while the real fault goes unreported. Failing loudly is the more useful answer when the way back is one command.
 
 ### Terraform seeds the parameter and then stops owning it

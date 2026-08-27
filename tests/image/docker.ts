@@ -8,7 +8,8 @@ export const IMAGE = process.env.IMAGE_TAG ?? "scheduling-manager:test";
 
 // Asked from inside the container, so these tests do not depend on the host
 // being able to reach a published port.
-const HEALTH_PROBE = `fetch("http://127.0.0.1:4000/health").then((r) => console.log(r.status))`;
+const probeFor = (path: string) =>
+  `fetch("http://127.0.0.1:4000${path}").then((r) => console.log(r.status))`;
 
 export async function docker(args: string[]): Promise<string> {
   const { stdout } = await exec("docker", args);
@@ -38,13 +39,18 @@ export async function startContainer(
   ]);
 
   const container = await docker(["run", "-d", ...flags, IMAGE]);
-  await waitFor(async () => (await healthStatus(container)) === 200);
+  await waitFor(async () => (await statusOf(container, "/health")) === 200);
 
   return container;
 }
 
-export async function healthStatus(container: string): Promise<number> {
-  return Number(await docker(["exec", container, "node", "-e", HEALTH_PROBE]));
+export async function statusOf(
+  container: string,
+  path: string,
+): Promise<number> {
+  return Number(
+    await docker(["exec", container, "node", "-e", probeFor(path)]),
+  );
 }
 
 export async function removeContainer(container: string): Promise<void> {

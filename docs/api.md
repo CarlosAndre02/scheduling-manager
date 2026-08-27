@@ -149,6 +149,7 @@ Base URL: `http://localhost:4000`. All bodies are JSON.
 | ------ | --------------------------- | -------------------------------------- |
 | GET    | `/`                         | Hello World                            |
 | GET    | `/health`                   | liveness check                         |
+| GET    | `/ready`                    | readiness check — reaches the database |
 | POST   | `/users`                    | create a user                          |
 | GET    | `/users/:id`                | get a user                             |
 | PUT    | `/users/:id`                | update a user's name and/or email      |
@@ -294,7 +295,26 @@ The full stack is written to the server log under that same id. Outside producti
 
 An `uncaughtException` or `unhandledRejection` is not turned into a response: the process logs it and exits with code 1, leaving a restart to the orchestrator. Once either fires the process state cannot be trusted, so there is no attempt to drain first.
 
-A database outage is **not** one of those cases. The connection pool drops the broken connections and reconnects on its own: requests that need the database answer `500` while it is down, and start succeeding again once it is back, without a restart. `/health` keeps answering `200` throughout on purpose — it reports whether this instance can serve, not whether its dependencies are up, so a database blip does not make the load balancer pull every instance out at once.
+A database outage is **not** one of those cases. The connection pool drops the broken connections and reconnects on its own: requests that need the database answer `500` while it is down, and start succeeding again once it is back, without a restart. `/health` keeps answering `200` throughout on purpose — see below.
+
+### Liveness and readiness
+
+Two probes, and the split is by **consumer** rather than by taste.
+
+| Endpoint  | Answers                                                        | Polled by                                      | A failure means              |
+| --------- | -------------------------------------------------------------- | ---------------------------------------------- | ---------------------------- |
+| `/health` | is this process serving? `503` while draining                  | the reverse proxy, every few seconds           | stop routing to this replica |
+| `/ready`  | can this release do its job? `/health` + a database round-trip | the image's `HEALTHCHECK`, and the deploy gate | the deploy fails             |
+
+**`/health` must not touch the database.** A dependency-aware check on the load balancer's path takes every replica out of rotation the moment the database blinks, leaving the proxy with no backend and its own bare error in place of the application's. A degraded database becomes a total outage, with a worse error surface than the `500` the application would have returned.
+
+**`/ready` must, and nothing routes on it.** It runs `SELECT 1` through the same pool the application uses, which proves the connection, TLS, the certificate authority, the credential and the pooler in one round-trip — the path a release has to work over. Docker marks a failing container `unhealthy` and acts no further (only Swarm does, and `restart:` reacts to process exit, not health), so a database outage shows up as an honest status and changes no routing.
+
+Three properties keep it from becoming the failure it reports:
+
+- **`SELECT 1`, never a table.** Readiness that depended on the schema would report a release broken for running correctly against a schema it does not yet use — the exact state [expand and contract](rollback.md#expand-and-contract) produces on purpose.
+- **A response budget, not just a query budget.** The endpoint answers within two seconds whatever the database is doing. It is publicly routable and the proxy caps concurrent requests, so a probe that hung on a slow database would fill that limit with health checks and reject real traffic.
+- **No reason in the body.** A status code is what acts on it; the description of what the database is doing would only be published.
 
 New error types belong in [src/shared/core/errors.ts](../src/shared/core/errors.ts) — controllers should not set status codes.
 

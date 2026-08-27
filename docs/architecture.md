@@ -67,7 +67,7 @@ New error types belong in `errors.ts`, not as status codes inside controllers.
 
 ## Process lifecycle
 
-[src/app.ts](../src/app.ts) builds the Express app and knows nothing about the process. [src/index.ts](../src/index.ts) owns the process: `listen`, keep-alive timeouts tuned above the load balancer idle timeout, signal handling, and the drain-then-close shutdown coordinated through `shared/core/lifecycle.ts`. `/health` answers `503` while draining.
+[src/app.ts](../src/app.ts) builds the Express app and knows nothing about the process. [src/index.ts](../src/index.ts) owns the process: `listen`, keep-alive timeouts tuned above the load balancer idle timeout, signal handling, and the drain-then-close shutdown coordinated through `shared/core/lifecycle.ts`. `/health` answers `503` while draining, and so does `/ready`, which additionally reaches the database — [api.md](api.md#liveness-and-readiness) covers why the two are separate.
 
 `uncaughtException` and `unhandledRejection` log and exit with code 1 without draining — past that point the process state cannot be trusted.
 
