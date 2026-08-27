@@ -194,6 +194,14 @@ jobs:
           role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
           aws-region: us-east-1
 
+          # Off by default. Storing the role ARN as a secret does not cover the
+          # account id: masking replaces the exact string registered, and the
+          # twelve digits appear on their own inside the registry hostname that
+          # ecr-login returns and `docker push` prints. This registers them, and
+          # masking then applies to every later line in the job — which is why
+          # the step ordering matters.
+          mask-aws-account-id: true
+
       - id: ecr
         uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
 
