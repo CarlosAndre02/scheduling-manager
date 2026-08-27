@@ -70,8 +70,14 @@ variable "acme_staging" {
 
 # ── what runs on it ───────────────────────────────────────────────────────────
 
+# Deliberately without a default and deliberately not the way to deploy. The
+# first boot runs deploy.sh, which pulls whatever the parameter says, so the
+# parameter has to be seeded with a real published tag or the instance comes up
+# with nothing to run. After that the value here is frozen — config.tf ignores
+# changes to it, and editing this variable produces an empty plan rather than a
+# release. Deploys go through scripts/release.sh.
 variable "image_tag" {
-  description = "The commit SHA CI published. Written to Parameter Store, not into the instance — see README.md on how a deploy happens."
+  description = "A published commit SHA to seed Parameter Store with on the first apply. Not the deploy mechanism — see README.md."
   type        = string
 
   validation {

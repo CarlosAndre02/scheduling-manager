@@ -137,38 +137,9 @@ The migrator takes a Postgres advisory lock and aborts if another run holds it, 
 
 ### Rollback and schema compatibility
 
-Rolling the app back to a previous image does **not** roll the schema back, and it must not: code is stateless, so replacing the image restores the previous behaviour exactly, while a database holds state. A down migration that drops a column does not undo anything — it destroys every value written there since.
+The schema only moves forward: a rollback restores a previous image and never a previous database. What makes that safe is an invariant — **the schema of release N has to work with the code of release N−1** — and a migration that breaks it is a release that cannot be reversed.
 
-So the schema only moves forward. What makes a rollback safe is an invariant instead:
-
-> **The schema of release N has to work with the code of release N−1.**
-
-This is the same guarantee Heroku offered, and it is worth being precise about how: `heroku rollback` restored a previous slug and its config, and never touched the database, which the platform documented plainly. Compatibility was not provided — it was a discipline the release model made cheap to keep. Migrations ran in a release phase that blocked the deploy when they failed, and the schema stayed where it was.
-
-### Expand and contract
-
-Every schema change becomes up to three releases, each safe to roll back on its own:
-
-1. **Expand** — additive only. A new nullable column, a new table, a new index. Old code ignores it; new code may use it.
-2. **Backfill** — populate existing rows, and write to both places while both versions can run.
-3. **Contract** — remove the old structure, in a later release, once rolling back past the expand is no longer a possibility.
-
-Only the third step breaks a rollback, which is exactly why it is a separate deploy rather than the tail of the first.
-
-| Direct change, breaks rollback | Expand and contract                                                    |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| `RENAME COLUMN a TO b`         | add `b`, write both, backfill, drop `a` later                          |
-| `ADD COLUMN c NOT NULL`        | add it nullable, backfill, apply the constraint afterwards             |
-| `DROP COLUMN d`                | stop writing it, release, drop it in a later one                       |
-| Change a column's type         | new column with the new type, write both, move reads, drop the old one |
-
-**The dangerous case is not in the table.** Changing the _format_ of values inside a column the old code still reads produces no error at all — the previous release parses the new format as if it were the old one and is quietly wrong. A format change needs a new column, exactly like a type change.
-
-### Proving the invariant
-
-The rule above is only worth as much as its enforcement, and it is mechanically checkable: apply the migrations from the change onto a clean database, then run the **previous release's** test suite against that schema. If the old tests pass, the old code runs on the new schema, which is the whole claim.
-
-Two things never provide this guarantee. Down migrations are a local convenience and should not be run against real data. Point-in-time recovery restores to a new instance and discards everything after the chosen moment, which makes it a disaster tool rather than a rollback — see [rds.md](rds.md#backups-and-what-point-in-time-recovery-is-not).
+Expand and contract, the changes that need splitting across releases, and how to prove the invariant mechanically are in [rollback.md](rollback.md#the-schema-only-moves-forward).
 
 ## Endpoints
 
@@ -178,6 +149,7 @@ Base URL: `http://localhost:4000`. All bodies are JSON.
 | ------ | --------------------------- | -------------------------------------- |
 | GET    | `/`                         | Hello World                            |
 | GET    | `/health`                   | liveness check                         |
+| GET    | `/ready`                    | readiness check — reaches the database |
 | POST   | `/users`                    | create a user                          |
 | GET    | `/users/:id`                | get a user                             |
 | PUT    | `/users/:id`                | update a user's name and/or email      |
@@ -323,7 +295,26 @@ The full stack is written to the server log under that same id. Outside producti
 
 An `uncaughtException` or `unhandledRejection` is not turned into a response: the process logs it and exits with code 1, leaving a restart to the orchestrator. Once either fires the process state cannot be trusted, so there is no attempt to drain first.
 
-A database outage is **not** one of those cases. The connection pool drops the broken connections and reconnects on its own: requests that need the database answer `500` while it is down, and start succeeding again once it is back, without a restart. `/health` keeps answering `200` throughout on purpose — it reports whether this instance can serve, not whether its dependencies are up, so a database blip does not make the load balancer pull every instance out at once.
+A database outage is **not** one of those cases. The connection pool drops the broken connections and reconnects on its own: requests that need the database answer `500` while it is down, and start succeeding again once it is back, without a restart. `/health` keeps answering `200` throughout on purpose — see below.
+
+### Liveness and readiness
+
+Two probes, and the split is by **consumer** rather than by taste.
+
+| Endpoint  | Answers                                                        | Polled by                                      | A failure means              |
+| --------- | -------------------------------------------------------------- | ---------------------------------------------- | ---------------------------- |
+| `/health` | is this process serving? `503` while draining                  | the reverse proxy, every few seconds           | stop routing to this replica |
+| `/ready`  | can this release do its job? `/health` + a database round-trip | the image's `HEALTHCHECK`, and the deploy gate | the deploy fails             |
+
+**`/health` must not touch the database.** A dependency-aware check on the load balancer's path takes every replica out of rotation the moment the database blinks, leaving the proxy with no backend and its own bare error in place of the application's. A degraded database becomes a total outage, with a worse error surface than the `500` the application would have returned.
+
+**`/ready` must, and nothing routes on it.** It runs `SELECT 1` through the same pool the application uses, which proves the connection, TLS, the certificate authority, the credential and the pooler in one round-trip — the path a release has to work over. Docker marks a failing container `unhealthy` and acts no further (only Swarm does, and `restart:` reacts to process exit, not health), so a database outage shows up as an honest status and changes no routing.
+
+Three properties keep it from becoming the failure it reports:
+
+- **`SELECT 1`, never a table.** Readiness that depended on the schema would report a release broken for running correctly against a schema it does not yet use — the exact state [expand and contract](rollback.md#expand-and-contract) produces on purpose.
+- **A response budget, not just a query budget.** The endpoint answers within two seconds whatever the database is doing. It is publicly routable and the proxy caps concurrent requests, so a probe that hung on a slow database would fill that limit with health checks and reject real traffic.
+- **No reason in the body.** A status code is what acts on it; the description of what the database is doing would only be published.
 
 New error types belong in [src/shared/core/errors.ts](../src/shared/core/errors.ts) — controllers should not set status codes.
 

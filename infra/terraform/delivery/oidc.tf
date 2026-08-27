@@ -55,6 +55,8 @@ data "aws_iam_policy_document" "ci_trust" {
   }
 }
 
+data "aws_caller_identity" "current" {}
+
 resource "aws_iam_role" "ci" {
   name               = "${var.project}-ci"
   description        = "Assumed by GitHub Actions through OIDC to publish images"
@@ -88,9 +90,74 @@ data "aws_iam_policy_document" "ci_permissions" {
       "ecr:PutImage",
 
       # So a re-run on an already-published commit can report the tag exists,
-      # rather than failing opaquely on the immutable-tag rejection.
+      # rather than failing opaquely on the immutable-tag rejection — and so a
+      # release can refuse a tag that was never published, before it becomes the
+      # value the instance is told to pull.
       "ecr:DescribeImages",
     ]
+  }
+
+  # A release is two writes and a read, and this is all three. The parameter
+  # says which image should be running; the document runs the script that makes
+  # it so; the invocation is how the caller learns whether it worked.
+  #
+  # Nothing here can create a release — only name one that ECR already holds.
+  # Read as well as write, and on that one parameter: a release reports the tag
+  # it is replacing, so the failure message can name the command that goes back.
+  # Without the read the deploy fails on its first call rather than its last.
+  statement {
+    sid     = "RecordTheRelease"
+    effect  = "Allow"
+    actions = ["ssm:GetParameter", "ssm:PutParameter"]
+
+    resources = [
+      "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/${var.project}/image-tag",
+    ]
+  }
+
+  # The document lives in the compute stack, which is applied after this one, so
+  # a data source here would be a dependency in the wrong direction. The ARN is
+  # built from the naming convention instead — the same contract the compute
+  # stack already relies on when it finds the network by tag.
+  #
+  # Naming the document is the whole point. SendCommand on AWS-RunShellScript
+  # would take the command as an argument and make this a root shell.
+  statement {
+    sid       = "RunTheDeployDocument"
+    effect    = "Allow"
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:document/${var.project}-deploy"]
+  }
+
+  # SendCommand authorises the document and each target instance separately, so
+  # this cannot be folded into the statement above: the condition would be
+  # evaluated against the document too, which does not carry that tag, and every
+  # deploy would be denied. The tag rather than an instance id, because the
+  # instance is replaceable and the id is not stable across a rebuild.
+  statement {
+    sid       = "OnTheApplicationInstanceOnly"
+    effect    = "Allow"
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ssm:resourceTag/Name"
+      values   = ["${var.project}-app"]
+    }
+  }
+
+  # Neither this action nor GetCommandInvocation supports resource-level
+  # permissions, so `*` is the only form either can take — which means this
+  # grant reads the output of every command run in the account, not only the
+  # deploys it sent. It is listed alone because it is the one the release
+  # actually calls; adding the other would widen nothing and narrow nothing,
+  # and there is no reason to hold a permission that is never exercised.
+  statement {
+    sid       = "ReadTheResult"
+    effect    = "Allow"
+    actions   = ["ssm:ListCommandInvocations"]
+    resources = ["*"]
   }
 }
 

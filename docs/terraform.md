@@ -41,6 +41,44 @@ Adding `alerts-v2.tf` alongside `alerts.tf` produces a _second_ set of resources
 - `-/+ destroy and then create replacement` means the attribute is immutable in the provider API. Acceptable for a budget; not for a database.
 - **Renaming a resource's Terraform address destroys and recreates it.** State is keyed by the address, so `aws_budgets_budget.ceiling` → `.limit` reads as "delete that one, create this one". A `moved` block renames without touching the resource.
 
+## Rendering files
+
+Configuration that has to reach a machine — a Compose file, a proxy's config, a boot script — is written as a template and rendered by `templatefile(path, vars)`, which returns a string. The `.tftpl` extension means nothing to Terraform; it exists so an editor does not try to parse a file that still has placeholders in it.
+
+A template understands exactly two constructs, and one escape:
+
+| Written      | Does                                                            |
+| ------------ | --------------------------------------------------------------- |
+| `${expr}`    | substitutes the value                                           |
+| `%{ if c ~}` | includes the block, or omits it; `~` trims surrounding newlines |
+| `$${...}`    | emits a literal `${...}` — the escape                           |
+
+**The escape is not optional trivia.** Substitution runs over the whole file, comments included, so a comment that merely mentions `${...}` as an example fails the render with a parse error pointing at a line that looks inert.
+
+### Layers have to be counted
+
+A rendered file often passes through more than one thing that treats `$` as special, and each layer has to be accounted for separately. A Compose file delivered through a shell script inside user data crosses three:
+
+1. **Terraform** substitutes `${...}` when rendering, and leaves `$${...}` behind as `${...}`.
+2. **The shell** writes the file with a here-document. Its delimiter must be **quoted** — `<<'COMPOSE'` — or the shell expands what Terraform deliberately left alone, and the placeholders become empty strings.
+3. **Compose** finally substitutes them from its own `.env`.
+
+Getting layer 2 wrong is silent: the file is written, the service starts, and an image reference or a replica count is simply blank. The rule that keeps it straight — quote the delimiter whenever the content is already rendered, and leave it unquoted only when the shell's own variables are what you want expanded.
+
+### Checking a render without applying
+
+`terraform validate` parses the configuration and never evaluates a template against real values. To see the actual output, render it in a scratch directory holding a copy of the templates and a `main.tf` with no backend block:
+
+```bash
+printf 'jsonencode(templatefile("./templates/x.tftpl", {a = 1, b = true}))\n' \
+  | terraform console \
+  | python3 -c 'import sys,json; sys.stdout.write(json.loads(json.loads(sys.stdin.read().strip())))'
+```
+
+Two behaviours make this fiddlier than it looks. `terraform console` prints a multi-line string as a heredoc, so `jsonencode` is what makes the output machine-readable; and it evaluates **one line at a time**, so a multi-line expression has to be collapsed onto one line or moved into an `output` and read with `terraform output -raw`.
+
+Rendering is also the only way to see what a size limit will be measured against. User data is capped at 16 kB before base64 encoding, and the plan does not tell you how close you are.
+
 ## State
 
 State is a plain JSON file mapping each address to a real resource. Losing it makes Terraform forget everything it created and try to create it again.

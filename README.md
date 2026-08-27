@@ -61,9 +61,45 @@ npm run test:image
 
 Every one of them has a local equivalent, so a red pipeline is reproducible without pushing.
 
+`image` runs on an arm64 runner, because `docker build` produces an image for the machine it runs on and the deployment host is Graviton. It asserts the architecture it produced before handing the image on — every other gate accepts a mismatched one without complaint, and the failure would surface only as a container that will not start.
+
 Two further jobs run only on `main`, after all four pass. `publish` pushes the image the `image` job already built and tested to ECR, tagged by commit and authenticated with a short-lived token rather than a stored key; `migrate` then applies pending schema changes from that same image.
 
-Why each gate sits where it does, and how Dependabot feeds it, is in [docs/ci-cd.md](docs/ci-cd.md).
+## Releasing
+
+Installing a release is a separate, manually triggered workflow — [.github/workflows/deploy.yml](.github/workflows/deploy.yml) — because a merge is a statement about the code and a deploy is a statement about right now. With one instance and no load balancer, a bad release is an outage until a person reverses it.
+
+The release itself is a **name**: the commit SHA, held in Parameter Store. The instance never knows which version it is, it asks — so deploying and rolling back are the same operation with different values, and the way back is a path every deploy exercises.
+
+```bash
+scripts/release.sh --list     # what the registry holds, and what is released now
+scripts/release.sh <sha>      # deploy, or roll back
+```
+
+The workflow calls that same script rather than reimplementing it. On the instance, the deploy refuses to report success until the containers report healthy — `docker compose up -d` returning is not evidence that anything answers.
+
+What a rollback does **not** undo — the schema above all — is in [docs/rollback.md](docs/rollback.md).
+
+Why each gate sits where it does, how a release reaches the host, and how Dependabot feeds it, is in [docs/ci-cd.md](docs/ci-cd.md).
+
+## Infrastructure
+
+Terraform under [infra/terraform/](infra/terraform/), one stack per state file. Two of them describe where the application runs:
+
+| Stack     | Owns                                                                                                                |
+| --------- | ------------------------------------------------------------------------------------------------------------------- |
+| `network` | a VPC across two availability zones, public and private subnets, the internet gateway, and the security group chain |
+| `compute` | one EC2 instance, an Elastic IP, and Traefik terminating TLS in front of the application containers                 |
+
+Two constraints produced that shape.
+
+**Nothing bills until something has to run.** Every resource in `network` is free, so the delivery pipeline is proven end to end before the first hourly charge. The instance sits in a public subnet behind a locked security group rather than behind a NAT gateway, which on its own would cost more than everything else combined.
+
+**It is laid out to receive a load balancer without a redesign.** One instance does not justify an ALB — a second one would, and Fargate would require it. So the network keeps two public subnets in two AZs from the start, the public name is a DNS record, the application never terminates TLS itself, and the number of proxies in front is configuration. Adding a load balancer later changes one security group rule and nothing in the application.
+
+Inside the instance, containers register themselves with the proxy through Docker labels, so scaling is a number rather than a config rewrite.
+
+[docs/vpc.md](docs/vpc.md) and [docs/ec2.md](docs/ec2.md) carry the reasoning; [docs/aws-stack-implementation.md](docs/aws-stack-implementation.md) covers how the stacks are split and in what order they apply.
 
 ## Clean Architecture
 
@@ -95,10 +131,12 @@ Use cases depend on repository _interfaces_, never on Drizzle, so the domain has
 
 - [docs/architecture.md](docs/architecture.md) — layering, DI, error model, process lifecycle, database design
 - [docs/api.md](docs/api.md) — HTTP contract, environment variables, migrations, deployment notes
-- [docs/ci-cd.md](docs/ci-cd.md) — the pipeline: what runs on every push and why
+- [docs/ci-cd.md](docs/ci-cd.md) — the pipeline: what runs on every push, and how a release reaches the instance
+- [docs/rollback.md](docs/rollback.md) — going back: what a rollback undoes, what it cannot, and the schema discipline that keeps it available
 - [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail
 - [docs/aws-stack-implementation.md](docs/aws-stack-implementation.md) — how the infrastructure is split into stacks, and in which order
 - [docs/vpc.md](docs/vpc.md) — VPC, subnets, availability zones, egress options, security groups
+- [docs/ec2.md](docs/ec2.md) — the host: sizing, the reverse proxy, TLS and ACME, throttling, deploys
 - [docs/supabase.md](docs/supabase.md) — the database provider: endpoint choice, TLS, and what it changes in AWS
 - [docs/rds.md](docs/rds.md) — why RDS is not used, and what a managed PostgreSQL requires of the application
 - [docs/terraform.md](docs/terraform.md) — declarative model, state, imports; stacks live in [infra/terraform/](infra/terraform/)

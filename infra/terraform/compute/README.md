@@ -10,6 +10,7 @@ The host that serves the application: one EC2 instance, a reverse proxy terminat
 | Elastic IP           | a stable address that survives a stop, a start and a replacement                        |
 | IAM role and profile | pull one ECR repository, read `/<project>/*` in Parameter Store, accept Session Manager |
 | SSM parameters       | `image-tag` and `app-replicas` — what a deploy reads                                    |
+| SSM document         | the only command the CI role may run on the instance, and it takes no arguments         |
 | Route 53 A record    | only when `domain_name` is set                                                          |
 
 On the instance: Traefik on 80 and 443, `app_replicas` application containers, and a socket proxy between Traefik and the Docker API.
@@ -29,7 +30,18 @@ There is no Auto Scaling group, no load balancer, no ACM certificate and no WAF.
 
 **The empty mode is for bringing the stack up, not for serving anyone.** It proves the instance boots, the image pulls and the database answers, without needing a domain to exist first. Everything it carries crosses the internet in the clear, including whatever the API returns.
 
-Going from one to the other is a variable and an apply. Nothing about the instance changes except the rendered configuration, so it is worth doing in that order rather than blocking the first apply on a domain purchase.
+Starting without a domain is worth doing rather than blocking the first apply on a domain purchase — but **switching afterwards is not just a variable and an apply.**
+
+Setting `domain_name` re-renders the proxy's configuration and the Compose file, adding the `443` publish, the certificate resolver and the TLS labels. Those files are delivered by user data, and cloud-init runs once. The apply creates the DNS record and changes nothing on the host, so the name resolves to an instance still listening on `80` alone and HTTPS is refused — which reads like a certificate problem and is a delivery problem.
+
+The switch therefore needs the instance rebuilt:
+
+```bash
+terraform apply -var domain_name=api.example.com -var acme_email=you@example.com
+terraform apply -replace=aws_instance.app
+```
+
+Keep `acme_staging = true` across that first rebuild. Confirm a certificate is issued at all before asking a rate-limited authority for a trusted one.
 
 ## Prerequisites
 
@@ -55,7 +67,7 @@ terraform plan
 terraform apply
 ```
 
-`image_tag` has no default. Everything else does — copy `terraform.tfvars.example` only to override one.
+`image_tag` has no default, because the first boot pulls whatever it names. Everything else does — copy `terraform.tfvars.example` only to override one.
 
 The instance takes a minute or two to be useful after `apply` returns: cloud-init still has packages to install and an image to pull.
 
@@ -69,24 +81,86 @@ sudo tail -100 /var/log/cloud-init-output.log
 sudo docker compose -f /opt/app/docker-compose.yaml ps
 ```
 
-## How a deploy happens
+### What to check, and what each check proves
 
-Two steps, and they are separate because they answer different questions.
+The checks worth running after an apply are the ones the local exercise in [ec2.md](../../../docs/ec2.md#testing-it-before-it-is-real) structurally cannot reach. Repeating the rest proves nothing: it exercises the same rendered files.
+
+| Check                                              | Proves                                                       |
+| -------------------------------------------------- | ------------------------------------------------------------ |
+| `curl <elastic ip>/health`                         | the address association, routing, and container discovery    |
+| `curl <elastic ip>/ready` → **200**                | the database round-trip **from the instance**                |
+| `docker compose ps`                                | every replica running and `healthy`                          |
+| a few 404s, then the proxy log filtered on `:4000` | requests reaching more than one replica                      |
+| `docker stop` one replica, under traffic           | the drain, the health check and the grace period still agree |
+| `scripts/release.sh <the tag already running>`     | the whole release path, without changing what is running     |
+
+**The second one is the point.** `/health` deliberately does not touch the database, so an answering instance proves the container started and nothing more. `/ready` runs `SELECT 1` through the application's own pool: `200` means the connection, the TLS configuration and the bundled certificate authority all work over the instance's network path, which is not the one CI used.
+
+It is also the signal the deploy gates on, so a `200` here and a successful deploy are the same evidence — which makes this check a confirmation rather than a discovery. `curl <elastic ip>/users/$(uuidgen)` → **404, not 500** remains the stronger version, since it exercises a real query through the ORM rather than a bare round-trip.
+
+**The last one needs its result read before anything else touches the container:**
 
 ```bash
-terraform apply -var image_tag=<sha>     # declares what should run
-eval "$(terraform output -raw deploy_command)"   # makes it run
+sudo docker inspect -f 'exit={{.State.ExitCode}}' <container>
+sudo docker logs <container> 2>&1 | tail -4
 ```
 
-The first moves a Parameter Store value. The second runs `/opt/app/deploy.sh` on the instance through Run Command, which reads that value, logs in to ECR, pulls, and brings the containers up. Nothing opens a port and no key is involved.
+`exit=0` with `Shutdown complete` is the pass. `exit=137` is `SIGKILL` arriving mid-drain, which means `stop_grace_period` no longer covers the drain plus the shutdown timeout.
 
-**Why the image tag is not in user data.** Cloud-init runs user data once, at first boot, and never again. Anything baked into it can only be delivered by replacing the instance — which here means an outage plus a fresh certificate request against a limit a rebuild loop exhausts quickly. So a release changes a parameter, and the machine stays.
+**Then put the replica back.** `docker stop` marks a container as stopped _by hand_, and `restart: unless-stopped` honours that — so it will not return on its own, and the host is left running on one replica, which is the state two replicas exist to avoid:
+
+```bash
+sudo docker compose -f /opt/app/docker-compose.yaml up -d
+```
+
+That command is also the cheapest demonstration that a deploy is idempotent: it starts what is missing and reports the rest as already running.
+
+**Releasing the tag that is already released proves the path, not the payload.** Nothing changes on the host — the pull is a no-op and the containers are already healthy — while the run still exercises the ECR lookup, the parameter write, the document, the instance's own permissions and the health gate. It is the only way to find out that a release is broken at a moment when nothing depends on it working.
+
+## How a deploy happens
+
+Not through Terraform.
+
+```bash
+scripts/release.sh --list     # what ECR holds, and what is released now
+scripts/release.sh <sha>      # deploy, or roll back
+```
+
+The script moves `/<project>/image-tag`, sends the `<project>-deploy` document through Run Command, and waits for a verdict. On the instance, `/opt/app/deploy.sh` reads the parameter, logs in to ECR, pulls, brings the containers up, and refuses to report success until as many containers are healthy as there are replicas. Nothing opens a port and no key is involved. [docs/ci-cd.md](../../../docs/ci-cd.md#deploying) covers the order and why each step is where it is.
+
+**`image_tag` is a seed, not a lever.** Terraform creates the parameter with it and then stops owning the value (`ignore_changes`), because a release and an apply writing to the same place means the apply eventually reverts a release it knows nothing about. Editing the variable after the first apply plans nothing.
+
+**Why the tag is not in user data at all.** Cloud-init runs user data once, at first boot, and never again. Anything baked into it can only be delivered by replacing the instance — which here means an outage plus a fresh certificate request against a limit a rebuild loop exhausts quickly. So a release changes a parameter, and the machine stays.
+
+**A failed deploy is not rolled back for you.** `deploy.sh` exits non-zero and leaves the failed release in place, because reverting from there would be guessing at a cause it cannot see — an unreachable database fails every image's health check equally, and the host would flip between two good releases while the real fault goes unreported. The way back is `scripts/release.sh <previous-sha>`, and the failure message names it — [docs/rollback.md](../../../docs/rollback.md) covers what it does and does not reverse.
 
 `app_replicas` works the same way, and `deploy.sh` derives each container's `DATABASE_POOL_MAX` from `database_pool_size` divided by the replica count, so raising the replicas cannot quietly ask the pooler for more connections than it has.
+
+**Two files, and they are not interchangeable.** `deploy.sh` writes both into `/opt/app`, and confusing them puts a credential where it does not belong:
+
+| File      | Read by                                          | Holds                                     | Reaches the container           |
+| --------- | ------------------------------------------------ | ----------------------------------------- | ------------------------------- |
+| `app.env` | Compose, through `env_file:`                     | `DATABASE_URL`                            | yes, as environment             |
+| `.env`    | Compose, to substitute `${}` in the Compose file | image reference, replica count, pool size | only if named in `environment:` |
+
+`.env` is textual substitution across the whole Compose file, and `docker compose config` prints the result — which is why the credential is not in it.
 
 **A restart drops no requests, and that is not automatic.** The application answers `503` on `/health` while draining, Traefik health-checks that path every five seconds and takes the draining container out of rotation, and the remaining replicas absorb its traffic. It only works because all three agree on the timing: `stop_grace_period` is longer than the drain, or Docker sends `SIGKILL` in the middle of it and the in-flight requests are cut anyway — with an exit code of 137 as the only trace.
 
 ## Managing it
+
+Every change goes through `plan` and `apply`; nothing here is edited in the console, and anything that is will be reverted by the next apply. What differs is the cost of each change, and the plan is the authority — this table is the expectation to check it against.
+
+| Changing                                         | Costs                                                                       |
+| ------------------------------------------------ | --------------------------------------------------------------------------- |
+| `app_replicas`                                   | a parameter; needs a deploy to take effect                                  |
+| `image_tag`, after the first apply               | nothing — the value belongs to `scripts/release.sh`                         |
+| `instance_type` (within Graviton)                | a stop, a resize and a start — the instance survives                        |
+| `root_volume_size`, upward                       | grown in place                                                              |
+| security groups, `metadata_options`              | in place                                                                    |
+| the templates, `rate_limit_*`, `in_flight_limit` | nothing, until the instance is rebuilt — see below                          |
+| `domain_name`                                    | a DNS record, and nothing on the host — see [the two modes](#the-two-modes) |
+| `subnet_id`                                      | **replaces the instance**                                                   |
 
 **Editing a template does not change a running instance.** `user_data_replace_on_change` is `false`, so Terraform will not destroy the only host because a comment moved. Delivering a bootstrap change is deliberate:
 
@@ -95,6 +169,13 @@ terraform apply -replace=aws_instance.app
 ```
 
 Read what that costs first: the instance is gone for the length of a boot, and the ACME storage goes with it.
+
+**`deploy.sh` is one of those templates.** It is written by user data, so a change to it — the health gate, the pool arithmetic — reaches a running host only through a rebuild. When a rebuild is not wanted, the rendered script can be placed on the instance directly over Session Manager, which is a change Terraform cannot see and has to be folded back by rebuilding eventually:
+
+```bash
+aws ssm start-session --target <instance-id>
+sudo tee /opt/app/deploy.sh < <the rendered script> && sudo chmod 0750 /opt/app/deploy.sh
+```
 
 **Operating system upgrades are also deliberate.** The AMI comes from an AWS-published parameter that resolves to whatever is newest, and the attribute forces replacement — so `ignore_changes = [ami]` is what stops an unrelated apply months from now from proposing to destroy the host. Upgrading is the same `-replace`, having read what changed.
 

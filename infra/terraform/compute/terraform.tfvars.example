@@ -1,5 +1,7 @@
-# The commit SHA CI published to ECR. No default: there is no sensible guess,
-# and the wrong one is a deploy of the wrong code.
+# A commit SHA CI has already published to ECR, used only to seed the parameter
+# on the first apply. Changing it later plans nothing: from that point the value
+# belongs to scripts/release.sh, and an apply that could move it would be an
+# unannounced rollback.
 image_tag = "0000000000000000000000000000000000000000"
 
 # Leave domain_name empty to bring the stack up without a certificate: the

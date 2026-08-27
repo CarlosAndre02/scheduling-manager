@@ -213,6 +213,40 @@ Worth stating plainly, because "firewall" gets used for all of these:
 - **Host firewalls** duplicate the security group and add a second place to get the same rule wrong.
 - **AWS Shield Standard** is free, automatic, and covers volumetric attacks at layers 3 and 4. It does nothing about a flood of well-formed HTTP requests.
 
+## Systems Manager, and what it replaces
+
+Systems Manager is an umbrella over roughly fifteen operational tools rather than one service. Three of them carry this host:
+
+| Tool                | Does                                                        | Used for                                                                                                      |
+| ------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Parameter Store** | hierarchical configuration; `SecureString` is KMS-encrypted | the image tag, the replica count, the database URL                                                            |
+| **Session Manager** | a shell, with no inbound port and no key                    | the only way onto the host                                                                                    |
+| **Run Command**     | executes a script on selected instances                     | the deploy                                                                                                    |
+| Patch Manager       | patch baselines and maintenance windows                     | nothing, which is a gap — see [aws-stack-implementation.md](aws-stack-implementation.md#the-application-host) |
+
+**Secrets Manager is not part of Systems Manager.** It is a separate service with separate pricing, and the confusion matters when choosing between it and Parameter Store:
+
+|                    | Parameter Store    | Secrets Manager                                      |
+| ------------------ | ------------------ | ---------------------------------------------------- |
+| Price              | standard tier free | per secret per month, plus API calls                 |
+| Automatic rotation | none               | built in, with ready-made rotation for AWS databases |
+| Resource policy    | none               | yes — cross-account sharing                          |
+
+Rotation is the only difference that would justify the cost here, and the ready-made rotations target AWS-managed databases. Against a database hosted elsewhere it would have to be written by hand, which leaves nothing being paid for.
+
+### Why not SSH
+
+|              | Session Manager                       | SSH                              |
+| ------------ | ------------------------------------- | -------------------------------- |
+| Inbound port | **none** — the agent connects outward | 22, or a bastion in front        |
+| Credential   | IAM, short-lived                      | a key, valid until it is removed |
+| Revoking it  | remove a permission                   | remove the key from every host   |
+| Audit        | every session in CloudTrail           | whatever was configured          |
+
+The decisive part is the first row: the security group needs no rule for it, so the chain stays at 80 and 443 and nothing else. An SSH rule would need a source, and neither a changing home address nor `0.0.0.0/0` is an answer worth writing down.
+
+**What SSH still wins is the case where the agent is what broke.** Session Manager depends on the agent and on the AWS API being reachable, so its control plane is inside the thing being debugged; `sshd` depends on neither. It also wins on file transfer and on interactive latency. What makes the trade comfortable here is that the host is disposable — a broken agent is a `-replace`, and nothing of value lives on the machine.
+
 ## Deploying
 
 ### The image tag does not live in user data
@@ -223,11 +257,29 @@ Cloud-init runs user data **once**, on the first boot. Anything baked into it ca
 | ------------------------------------------------------ | ----------------------------------------- |
 | what the machine _is_ — packages, layout, config files | what it _runs_ — image tag, replica count |
 
-A release updates a parameter and runs the deploy script. The machine stays. The same two calls are what a CD job would make.
+A release updates a parameter and runs the deploy script. The machine stays. Both calls are what [scripts/release.sh](../scripts/release.sh) makes, from a terminal or from the deploy workflow — [ci-cd.md](ci-cd.md#deploying) covers the ordering.
 
 This is also why `user_data_replace_on_change` is false. Since cloud-init will not re-run regardless, the only question the setting answers is whether Terraform destroys the host to deliver a template edit — and on a single instance that must be a decision, not a side effect.
 
 **Configuration that a running system needs to change under pressure is the exception.** The proxy's dynamic file is watched and reloaded in place, so a limit can be re-tuned in seconds over Session Manager during an incident. Folding the same value back into Terraform afterwards is what keeps the declaration honest.
+
+### A deploy that succeeds is not a release that works
+
+`docker compose up -d` returns once the containers have been **created**. Creation is not startup, startup is not readiness, and the gap between them has already produced a silent failure: an image built for the wrong architecture is created successfully, exits in milliseconds, and is restarted forever by the restart policy. Every step before it reports success, and the only symptom is a bare `404` from a proxy that has no backend to route to.
+
+So `deploy.sh` waits for the image's own `HEALTHCHECK` to report as many healthy containers as there are replicas, and exits non-zero if it does not within two minutes. The signal has to come from the container, because every cheaper signal — the exit code of `up -d`, the container existing, the process running — was already true in that failure.
+
+**That health check asks `/ready`, not `/health`.** Liveness was already true in the architecture failure and would be true again for the next likely one: a wrong credential, an unreachable pooler, a certificate authority the image cannot verify. A release that cannot reach its database is a release that answers `500` to everything real, and the gate has to be able to see that. The load balancer keeps polling `/health` — pointing it at a dependency-aware check would take every replica out of rotation over a blip. [api.md](api.md#liveness-and-readiness) covers the split.
+
+**Why the gate lives on the host and not in the deploy workflow.** A check in the workflow only guards the path through the workflow. The same script is what runs at first boot and what an operator runs over Session Manager, and a release installed either of those ways deserves the same verdict.
+
+**It does not roll back.** Reverting automatically would be guessing at a cause the script cannot observe: an unreachable database fails the health check of every image equally, and the host would flip between two perfectly good releases while the actual fault goes unreported. The failure message names the command that goes back — [rollback.md](rollback.md) covers what that command reaches and what it leaves behind.
+
+### Turning TLS on is a rebuild, not a setting
+
+The proxy's configuration and the Compose file are delivered by user data, so the set of ports the proxy publishes is fixed at first boot. Adding a hostname later re-renders both and creates the DNS record, and reaches the running host with neither — the name resolves to an instance that never opened `443`.
+
+This is the same property that makes deploys cheap working against you: what the machine _is_ only changes when the machine is rebuilt. It is worth knowing before the switch rather than during it, because the failure presents as TLS and is not.
 
 ### Draining, and the three timeouts that have to agree
 
@@ -301,13 +353,14 @@ Then, in a directory holding the rendered `docker-compose.yaml`, `traefik.yaml` 
 docker compose up -d
 ```
 
-`/health` does not touch the database, so the stack comes up healthy against an unreachable one.
+`/health` does not touch the database, so the stack comes up serving against an unreachable one. `/ready` does, so the containers report `unhealthy` — which is the correct answer locally and the reason a real deploy would have failed.
 
 ### What each check proves
 
 | Check                                                                 | Proves                                                          |
 | --------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `curl localhost/health`                                               | routing and label discovery                                     |
+| `curl localhost/ready`                                                | the database round-trip, and the signal the deploy gate reads   |
 | repeated 404s, then `docker compose logs traefik` filtered on `:4000` | requests are spread across replicas                             |
 | 150 fast requests at once                                             | the rate limit throttles, and the bucket refills after a pause  |
 | 25 slow uploads (`curl --limit-rate`), kept under the burst           | the in-flight limit fires exactly where the rate limit cannot   |
@@ -320,4 +373,4 @@ The last one is the check worth keeping. Run continuous requests against a **rea
 
 ### What this cannot cover
 
-Rendering and running locally exercises the proxy, the limits, the labels and the shutdown path. It says nothing about IAM, the instance profile, cloud-init, the Elastic IP association, or whether user data fits the **16 kB limit EC2 imposes before base64 encoding** — which the rendered script approaches closely enough that compressing it is not an optimisation but a requirement. Cloud-init decompresses gzipped user data on its own, so the cost is only a plan diff that no longer shows the script.
+Rendering and running locally exercises the proxy, the limits, the labels and the shutdown path. It says nothing about IAM, the instance profile, cloud-init, the Elastic IP association, or whether user data fits the **16 kB limit EC2 imposes before base64 encoding** — which the rendered script exceeds, making compression a requirement rather than an optimisation. Cloud-init decompresses gzipped user data on its own, so the cost is only a plan diff that no longer shows the script.

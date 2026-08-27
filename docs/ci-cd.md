@@ -1,4 +1,4 @@
-# CI
+# CI and deployment
 
 What runs on every change, and why each gate is set where it is. For running and testing locally, see [api.md](api.md).
 
@@ -12,6 +12,8 @@ What runs on every change, and why each gate is set where it is. For running and
 | `image`      | that the image builds, carries no fixable HIGH/CRITICAL CVE, and drains on `SIGTERM` |
 
 Two more jobs run only on `main`, and neither is a gate: `publish` delivers the image, and `migrate` moves the schema. See [publishing](#publishing) and [applying migrations](#applying-migrations).
+
+Installing a release on the instance is a third workflow, [deploy.yml](../.github/workflows/deploy.yml), and it is triggered by a person — see [deploying](#deploying).
 
 ## Why each gate sits where it does
 
@@ -103,15 +105,9 @@ The `publish` job pushes the image to ECR, tagged with the commit it was built f
 
 ### Delivery is not deployment
 
-`publish` completes continuous **delivery**: every approved commit produces an artifact that could be deployed, addressable by the commit it came from. Nothing in production changes, and the two halves of "CD" are worth keeping apart, because conflating them makes the remaining work invisible.
+`publish` completes continuous **delivery**: every approved commit produces an artifact that could be deployed, addressable by the commit it came from. Whether it _is_ deployed is a separate decision, taken in a separate workflow — [deploy.yml](../.github/workflows/deploy.yml), which nothing triggers automatically.
 
-Continuous **deployment** needs, beyond somewhere to deploy to:
-
-- a rollout mechanism — an instruction to the host to pull a tag and restart, or a new task definition revision;
-- a record of the desired version, since no moving tag carries it. That record is also what makes a rollback one command;
-- a migration strategy: schema changes must apply exactly once, before the new code serves traffic, and stay compatible with the code still running during the changeover;
-- a health check that decides whether the rollout succeeded, and an automatic way back when it did not;
-- one more grant on the CI role, which today can only push.
+The split is deliberate rather than unfinished. Merging is a statement about the code; deploying is a statement about right now, and there is one instance with no load balancer in front of it, so a bad release is an outage until a person reverses it. Automatic deployment is worth having when the rollout can fail safely — behind a load balancer, with a second instance to shift to. It buys much less when the only recovery is the same manual step in the other direction.
 
 ## Security caveats
 
@@ -121,15 +117,15 @@ The pipeline's own attack surface, and what bounds each part of it.
 
 **`pull_request_target` removes that boundary completely.** It runs the base branch's workflow, with full access to secrets, against code from the pull request. It exists for labelling and triage, and has no place in a workflow that can reach AWS.
 
-**The role is the blast radius, not the token.** A token that escapes a run expires within the hour and can do exactly what the role's policy permits: push to one repository. That is why the policy enumerates the push actions instead of granting `ecr:*`, and why a deploy permission is added only when there is something to deploy.
+**The role is the blast radius, not the token.** A token that escapes a run expires within the hour and can do exactly what the role's policy permits: push to one repository, move one parameter, send one document to one instance, and read command output. That is why the policy enumerates actions instead of granting `ecr:*` or `ssm:*`, and why the deploy grant names a document that takes no parameters — `ssm:SendCommand` on the AWS-owned `AWS-RunShellScript` would take the command as an argument and make the same grant a root shell on the host.
+
+**One of those five cannot be scoped.** `ssm:ListCommandInvocations` accepts no resource-level permission, so reading a deploy's own output means being able to read the output of every command run in the account. It is the smallest form the release step can take, not a small one.
 
 **The role ARN is stored as a secret and is not one.** It is kept out of the repository because it carries the account id, not because knowing it grants anything — the trust policy refuses every repository but one regardless of who reads the ARN. Its exposure is not a breach; an unreviewed change to the trust policy is.
 
-**Storing a value as a secret does not protect what it contains.** Masking replaces the exact string that was registered, so the account id inside the role ARN is not covered when it appears on its own — which it does, in the registry hostname `ecr-login` returns and `docker push` prints. On a public repository, run logs are readable by anyone, with no account at all, so this is not bounded by collaborator access. `mask-aws-account-id: true` registers the digits themselves, and masking then applies to every subsequent line in the job. The general rule: a secret hides one string, and a value derived from part of it is a different string.
+**Publishing is gated by branch, and the branch is not protected.** Anyone able to push to `main` can publish an image, since branch protection is deliberately absent — see below. Publishing on its own only writes to a registry; what makes that consequential is that the same role can now release. The step between the two is a human dispatching [deploy.yml](../.github/workflows/deploy.yml), which is a gate made of attention rather than of policy.
 
-Masking is log hygiene rather than access control. It does not reach artifact contents, and a value split across two lines slips through — so it lowers exposure without being something to rely on.
-
-**Publishing is gated by branch, and the branch is not protected.** Anyone able to push to `main` can publish an image, since branch protection is deliberately absent — see below. That is tolerable while publishing only writes to a registry, and stops being tolerable once the same role can deploy. A GitHub environment with required reviewers is the answer to that, and it moves the branch restriction from AWS to GitHub: a job declaring an environment receives `sub` of the form `repo:owner/repo:environment:name`, so the trust policy can no longer see which branch ran. The environment's own deployment branch policy becomes the only place that rule exists.
+A GitHub environment with required reviewers is what turns it into policy, and it is not a free addition: a job declaring an environment receives `sub` of the form `repo:owner/repo:environment:name` rather than `repo:owner/repo:ref:refs/heads/main`, so the trust policy stops being able to see which branch ran. Adding the environment means widening that policy in the same change, and the environment's own deployment branch rule becomes the only place the branch restriction exists. Declaring one without doing both fails at STS, reporting no identity rather than a misconfiguration.
 
 **Artifacts are as readable as the repository.** The image travels between jobs as a build artifact, which anyone who can read the repository's runs can download. It holds no secret, because configuration reaches the container at runtime — and that property has to survive: an image with a credential baked in must never be passed this way.
 
@@ -147,11 +143,57 @@ The `migrate` job runs the schema change from the image that was just published,
 
 **The statement timeout is disabled for this run only**, since DDL against a populated table can legitimately exceed any value that makes sense for a request. The application keeps its timeout so a stuck query cannot hold a pool connection.
 
-Whether it is safe to apply a schema change automatically is not a property of the pipeline but of the change: it holds exactly as long as migrations stay compatible with the release before them — see [api.md](api.md#rollback-and-schema-compatibility).
+Whether it is safe to apply a schema change automatically is not a property of the pipeline but of the change: it holds exactly as long as migrations stay compatible with the release before them — see [rollback.md](rollback.md#the-schema-only-moves-forward).
 
 ### Why runs on main queue instead of cancelling
 
 `cancel-in-progress` is switched off for `main`. Cancelling a run is correct while a run is only an _answer_ about a commit — a newer push makes the older answer irrelevant. It stops being correct once a run publishes an image and moves a schema, because a cancellation halfway through leaves a release half made. Pull requests keep the old behaviour, where cancelling saves runner time and loses nothing.
+
+## Deploying
+
+A release is a **name**, not a state of the machine. The name is the commit SHA, the same one the image carries, and it is written to `/<project>/image-tag` in Parameter Store. The instance does not know which version it is; it asks.
+
+Everything follows from that. A deploy and a rollback are the same operation with different values, so the way back is a path every deploy exercises rather than one nobody has run. What that path cannot reverse is in [rollback.md](rollback.md).
+
+### One script, two callers
+
+[scripts/release.sh](../scripts/release.sh) is the whole mechanism, and [deploy.yml](../.github/workflows/deploy.yml) calls it rather than reimplementing it — a workflow with its own copy would be a second definition of "deploy" to drift from the first, and the drift would surface during an incident.
+
+```bash
+scripts/release.sh --list     # what ECR still holds, and what is released now
+scripts/release.sh <sha>      # deploy, or roll back
+```
+
+Four steps, in an order that matters:
+
+1. **Refuse a tag ECR does not have.** A tag that was never published still writes to the parameter cleanly; the failure would then land on the host, as a pull error with the previous containers already gone.
+2. **Move the parameter**, before sending anything. If the instance reboots between this and the next step, it comes up on the intended release rather than the previous one.
+3. **Send the deploy document.** One fixed command, no parameters — see the security caveats above.
+4. **Wait for a verdict**, and fail the caller if it is not success.
+
+The wait is hand-written because `aws ssm wait command-executed` is a fixed twenty attempts five seconds apart. A deploy slower than 100 seconds — a cold pull on a burstable instance routinely is — fails the caller while succeeding on the host, which is the worst of the two available answers.
+
+### The gate is on the host, not in the workflow
+
+`docker compose up -d` returns once the containers have been **created**, which is not the same as the application answering. An image built for the wrong architecture is created successfully, dies in milliseconds, and restarts forever; every step of this pipeline reports success and the only symptom is a bare `404` from a proxy with no backend.
+
+So `deploy.sh` waits for the image's own `HEALTHCHECK` to report as many healthy containers as there are replicas, and exits non-zero if it does not. Putting it there rather than in the workflow means a deploy run by hand over Session Manager is gated identically.
+
+**That check asks `/ready`, which reaches the database.** Liveness alone was already true during the architecture failure, and would be true again for the next likely one — a wrong credential, an unreachable pooler, a certificate authority the image cannot verify. The load balancer keeps polling `/health`, because a dependency-aware check on the routing path pulls every replica over a blip. [api.md](api.md#liveness-and-readiness) covers the split.
+
+**It does not roll back on its own.** An automatic revert would guess at a cause the script cannot see: an unreachable database fails the health check of every image equally, and the host would flip between two perfectly good releases while the real fault goes unreported. Failing loudly is the more useful answer when the way back is one command.
+
+### Terraform seeds the parameter and then stops owning it
+
+The first apply has to create the parameter with a real published tag, because the first boot runs `deploy.sh` and pulls whatever it says. After that, `ignore_changes = [value]` hands it over.
+
+Without that, the two writers fight and Terraform wins by accident: an apply for an unrelated reason reads the tag out of `terraform.tfvars`, finds it behind, and proposes moving production back to it. The plan says `~ value`, names no version, and applying it is a rollback nobody asked for.
+
+### Schema first, code when someone says so
+
+`migrate` runs on merge; the deploy waits for a person. The window in which the **old** code runs against the **new** schema is therefore open-ended — minutes if someone deploys straight away, days if nobody does.
+
+This does not introduce the constraint, it enlarges it: a schema change has to be compatible with the release before it either way. What changes is how long being wrong stays invisible. [rollback.md](rollback.md#expand-and-contract) covers expand and contract.
 
 ## Dependabot
 

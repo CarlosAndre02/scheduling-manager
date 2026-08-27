@@ -14,6 +14,19 @@ resource "aws_ssm_parameter" "image_tag" {
   description = "The image tag the next deploy will run. Updating this does not restart anything — see the compute stack README."
   type        = "String"
   value       = var.image_tag
+
+  lifecycle {
+    # Terraform declares that this parameter exists; a release declares what it
+    # says. `var.image_tag` is therefore a seed, read once when the parameter is
+    # created, and the deploy owns the value from then on.
+    #
+    # Without this the two writers fight, and Terraform wins by accident: an
+    # apply for an unrelated reason — a new rate limit, another replica — reads
+    # the tag out of terraform.tfvars, finds it behind, and proposes moving
+    # production back to it. The plan says `~ value`, names no version, and
+    # applying it is a rollback nobody asked for.
+    ignore_changes = [value]
+  }
 }
 
 resource "aws_ssm_parameter" "app_replicas" {

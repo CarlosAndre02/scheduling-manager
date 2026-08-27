@@ -1,9 +1,4 @@
-import {
-  docker,
-  healthStatus,
-  removeContainer,
-  startContainer,
-} from "./docker";
+import { docker, removeContainer, startContainer, statusOf } from "./docker";
 
 // Long enough for the assertions below to land inside the drain window.
 const DRAIN_MS = 6_000;
@@ -25,19 +20,34 @@ describe("Container runtime", () => {
     }
   });
 
+  // The container is started with DATABASE_URL pointing at a port nothing
+  // listens on, which is the whole state /health exists not to report and
+  // /ready exists to. It is also what a deploy gates on, so a release that
+  // cannot reach its database fails the deploy instead of passing it.
+  it("Should serve while reporting not ready with the database unreachable", async () => {
+    const container = await startContainer();
+
+    try {
+      await expect(statusOf(container, "/health")).resolves.toBe(200);
+      await expect(statusOf(container, "/ready")).resolves.toBe(503);
+    } finally {
+      await removeContainer(container);
+    }
+  });
+
   it("Should report unhealthy while still serving on SIGTERM, then exit cleanly", async () => {
     const container = await startContainer({
       SHUTDOWN_DRAIN_DELAY_MS: String(DRAIN_MS),
     });
 
     try {
-      await expect(healthStatus(container)).resolves.toBe(200);
+      await expect(statusOf(container, "/health")).resolves.toBe(200);
 
       await docker(["kill", "-s", "TERM", container]);
 
       // Still answering: the point of the window is to keep serving in-flight
       // work while the load balancer stops sending new work.
-      await expect(healthStatus(container)).resolves.toBe(503);
+      await expect(statusOf(container, "/health")).resolves.toBe(503);
 
       await expect(docker(["wait", container])).resolves.toBe("0");
     } finally {

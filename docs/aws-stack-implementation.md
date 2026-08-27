@@ -18,7 +18,7 @@ The consequence to internalize: a single monolithic state makes the most dangero
 | `bootstrap` | the S3 bucket holding every other stack's state               | never   | every other stack forgets what it created       |
 | `network`   | VPC, subnets, route tables, internet gateway, security groups | rarely  | everything running inside it goes down          |
 | `delivery`  | ECR repository, GitHub OIDC provider, the CI role             | rarely  | deploys break; what is already running does not |
-| `database`  | RDS and its subnet group                                      | rarely  | the data is gone                                |
+| `database`  | the database, **only if it lives inside the VPC**             | rarely  | the data is gone                                |
 | `compute`   | EC2, the reverse proxy, DNS records                           | often   | the application goes down                       |
 
 `billing` and `audit` already exist alongside these and follow the same rule: separate concerns, separate state, each with its own runbook.
@@ -26,6 +26,8 @@ The consequence to internalize: a single monolithic state makes the most dangero
 Workloads live in `us-east-1`. The latency difference from Brazil is 100 ms or so against São Paulo, which does not matter for an API answering JSON, while the cost difference is 50–65% on compute and larger on data transfer — see [aws-governance.md](aws-governance.md).
 
 `delivery` sits apart on purpose. It is the only stack a compromised CI credential can reach, and keeping the database outside that boundary is worth a directory.
+
+**A hosted database has no stack at all.** A provider outside AWS is reached by a connection string, so what would have been a Terraform stack becomes a value in a secret store and nothing else — see [supabase.md](supabase.md). The row stays in the table because the split it describes is a property of the layout rather than of the current provider, and moving the database back inside the VPC would restore it unchanged.
 
 **`database` sits apart from `compute` for the same reason the split exists at all.** The instance is meant to be disposable — recreated from an image tag whenever anything changes — and the database is the one thing in the system that cannot be rebuilt from the repository. Sharing a state file would put both in the same plan, so the routine operation of replacing a server would be the operation that can also propose replacing the database. Deletion protection and `prevent_destroy` guard the resource; separate state means the question is never asked.
 
@@ -138,4 +140,6 @@ What the implementation defends against and what it does not. Every gap here is 
 
 **An investigation would start with almost nothing.** The access log keeps 4xx and 5xx, so data taken through requests that returned 200 leaves no record; container logs are capped and never shipped, so a replaced instance takes its history with it. This is the right trade for a disk and the wrong one for an incident, and the trigger for reversing it is the first real customer record entering the database.
 
-**A deploy is remote code execution gated only by IAM.** Run Command executes the deploy script as root, and the parameter that names the image decides what runs. Anyone holding both permissions can put any image CI ever published onto the host, without a review step or an approval. The bound is what is in that one repository; there is no second one.
+**A deploy runs as root, and its bound is the registry.** Run Command executes the deploy script as root, and the parameter that names the image decides what it runs. Two things narrow this and neither removes it. The document the CI role may send takes no arguments, so the permission is "run the deploy" rather than "run anything" — `ssm:SendCommand` on the AWS-owned `AWS-RunShellScript` would be the second, since it accepts the command as a parameter. And the script refuses to report success unless the release becomes healthy, so a deploy that breaks the host is at least loud.
+
+What remains is that anyone holding both permissions can put **any image CI ever published** onto the host, without a review step or an approval. The bound is the contents of one repository, and there is no second one. Making it a policy rather than a convention means a GitHub environment with required reviewers, which is a change to the trust policy as much as to the workflow — [ci-cd.md](ci-cd.md#security-caveats) covers why the two move together.

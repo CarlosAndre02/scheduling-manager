@@ -14,7 +14,8 @@ Read the relevant one before changing an area, and update it when a flow changes
 
 - [docs/architecture.md](docs/architecture.md) — layering, request flow, DI, error model, process lifecycle, database design, tooling
 - [docs/api.md](docs/api.md) — setup, running, testing, HTTP contract, dependency practice, migrations in production
-- [docs/ci-cd.md](docs/ci-cd.md) — what runs on every push, why each gate sits where it does, Dependabot
+- [docs/ci-cd.md](docs/ci-cd.md) — what runs on every push, why each gate sits where it does, how a release is named and installed, Dependabot
+- [docs/rollback.md](docs/rollback.md) — what a rollback undoes and what it cannot, the schema invariant, expand and contract
 - [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail, and the pitfalls found along the way
 - [docs/aws-stack-implementation.md](docs/aws-stack-implementation.md) — how the infrastructure is split into Terraform stacks, what each owns, apply order, state backend
 - [docs/vpc.md](docs/vpc.md) — the network model: VPC, subnets, AZs, internet/NAT gateways, VPC endpoints, security groups
@@ -38,6 +39,8 @@ npm run commit         # commitizen (conventional commits, enforced by a husky h
 Tests are **integration only** and hit a real server on `http://localhost:4000`. To run a single file, keep `npm run dev` in another terminal — see [docs/api.md](docs/api.md#testing).
 
 Migrations: `npm run drizzle:generate` after editing the schema, then `npm run db:migrate`. `drizzle-kit` only generates; applying always goes through `src/shared/database/migrate.ts`.
+
+Releases: `scripts/release.sh <sha>` deploys or rolls back — the same command either way — and `--list` shows what the registry holds. Never `terraform apply` to change the running version; the parameter is seeded by Terraform and owned by the script after that.
 
 ## Rules
 
