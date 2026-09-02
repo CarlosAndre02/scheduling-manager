@@ -50,6 +50,14 @@ jobs:
           role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
           aws-region: us-east-1
 
+          # Off by default, and this job prints more than the CI one does: the
+          # deploy's output is fetched from Run Command and echoed here, and its
+          # failure path runs `docker compose ps`, whose IMAGE column is the full
+          # registry hostname with the account id inside it. Registering the
+          # digits masks them for every later line in the job, which is why this
+          # sits on the step that runs first.
+          mask-aws-account-id: true
+
       # The same script an operator runs from a terminal. A workflow that
       # reimplemented it would be a second definition of "deploy" to drift from
       # the first, and the drift would only ever be discovered during an

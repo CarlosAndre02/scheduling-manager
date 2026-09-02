@@ -101,4 +101,4 @@ backend "s3" {
 }
 ```
 
-**Tearing it down is deliberately hard.** `prevent_destroy` makes `terraform destroy` fail, and removing the bucket while other stacks still reference it makes them forget everything they created. Emptying it requires deleting every version, not just the current ones.
+**Tearing it down is deliberately hard.** `prevent_destroy` makes `terraform destroy` fail, and removing the bucket while other stacks still reference it makes them forget everything they created. Emptying it requires deleting every version, not just the current ones — [scripts/purge-bucket.sh](../../../scripts/purge-bucket.sh) does that, and defaults to counting rather than deleting.

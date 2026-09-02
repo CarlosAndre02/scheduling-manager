@@ -249,6 +249,8 @@ The decisive part is the first row: the security group needs no rule for it, so 
 
 ## Deploying
 
+**Run Command returns a bounded slice of a command's output.** Anything chatty pushes the useful part out of the response, and the deploy is a pull that prints one progress line per layer — so `docker compose pull` runs quiet, or a successful deploy reports layer extraction where the line naming what was installed should be.
+
 ### The image tag does not live in user data
 
 Cloud-init runs user data **once**, on the first boot. Anything baked into it can only be delivered by replacing the instance — which here means downtime plus a certificate request against the weekly limit. So the split is:
@@ -307,7 +309,7 @@ Everything the host needs survives a stop, provided the stop is a stop and not a
 
 The credit line is the one that surprises people, and the surprise usually runs the wrong way: the older T2 family loses its credits the moment an instance stops, which is what most material describes. T4g keeps them for a week.
 
-Nothing is reconfigured on start. Cloud-init does not re-run, and it does not need to — the image is already on the volume, so the containers come back without a registry login. The two things that do change are worth knowing: the boot takes tens of seconds before anything answers, so the first request of the day cannot be the trigger; and a stop long enough for a certificate to expire means the proxy renews on start, which is a request against the rate limit rather than a failure.
+Nothing is reconfigured on start. Cloud-init does not re-run, and it does not need to — the image is already on the volume, so the containers come back without reaching the registry at all. The two things that do change are worth knowing: the boot takes tens of seconds before anything answers, so the first request of the day cannot be the trigger; and a stop long enough for a certificate to expire means the proxy renews on start, which is a request against the rate limit rather than a failure.
 
 What does **not** stop being billed is storage and the address — see the cost table below, where they are more than a third of the total.
 

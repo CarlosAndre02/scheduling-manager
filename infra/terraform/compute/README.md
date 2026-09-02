@@ -126,7 +126,7 @@ scripts/release.sh --list     # what ECR holds, and what is released now
 scripts/release.sh <sha>      # deploy, or roll back
 ```
 
-The script moves `/<project>/image-tag`, sends the `<project>-deploy` document through Run Command, and waits for a verdict. On the instance, `/opt/app/deploy.sh` reads the parameter, logs in to ECR, pulls, brings the containers up, and refuses to report success until as many containers are healthy as there are replicas. Nothing opens a port and no key is involved. [docs/ci-cd.md](../../../docs/ci-cd.md#deploying) covers the order and why each step is where it is.
+The script moves `/<project>/image-tag`, sends the `<project>-deploy` document through Run Command, and waits for a verdict. On the instance, `/opt/app/deploy.sh` reads the parameter, pulls, brings the containers up, and refuses to report success until as many containers are healthy as there are replicas. Nothing opens a port and no key is involved. [docs/ci-cd.md](../../../docs/ci-cd.md#deploying) covers the order and why each step is where it is.
 
 **`image_tag` is a seed, not a lever.** Terraform creates the parameter with it and then stops owning the value (`ignore_changes`), because a release and an apply writing to the same place means the apply eventually reverts a release it knows nothing about. Editing the variable after the first apply plans nothing.
 
@@ -184,6 +184,10 @@ sudo tee /opt/app/deploy.sh < <the rendered script> && sudo chmod 0750 /opt/app/
 **Tuning a limit does not need any of this.** `rate_limit_average`, `rate_limit_burst` and `in_flight_limit` render into `/opt/app/dynamic.yaml`, which Traefik watches and reloads in place — but the file is written by user data, so changing the variable needs the file updated on the instance. Editing it over Session Manager takes effect within seconds and is the right move in an incident; folding the same value back into Terraform afterwards is what keeps the two honest.
 
 **Bumping Compose means bumping its checksum**, on the adjacent line in [instance.tf](instance.tf). That is the point of recording it.
+
+**No `docker login` runs anywhere on the host.** The ECR credential helper is installed at boot and named in `/root/.docker/config.json` for one registry, so Docker asks the instance role for a token when a pull needs one and nothing is written to disk. `credHelpers` and not `credsStore`: the latter routes every registry through the helper, including Docker Hub, where it has no credential to offer and fails the pull of the proxy images.
+
+`deploy.sh` sets `DOCKER_CONFIG` explicitly rather than trusting `$HOME`, because it runs both from cloud-init and from Run Command and nothing guarantees the two agree. When they disagree the helper is never consulted and the pull fails with `no basic auth credentials`, which reads like a permissions problem and is a path problem.
 
 ## What it does not cover
 
