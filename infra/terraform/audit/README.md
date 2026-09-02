@@ -62,11 +62,13 @@ aws cloudtrail validate-logs \
 **Tearing it down is deliberately hard.** `terraform destroy` fails while the bucket holds locked objects, which is the point of Object Lock. Removing it means emptying the bucket first, and versions still inside their retention window need the governance bypass:
 
 ```bash
-aws s3api delete-object --bucket <bucket> --key <key> --version-id <id> \
-  --bypass-governance-retention
+scripts/purge-bucket.sh <bucket>          # counts, deletes nothing
+scripts/purge-bucket.sh <bucket> --yes    # empties it
 ```
 
-That requires `s3:BypassGovernanceRetention`, which `AdministratorAccess` includes. Consider whether deleting an audit trail is really what you want before reaching for it.
+That requires `s3:BypassGovernanceRetention`, which `AdministratorAccess` includes. The script decides per bucket whether to send the flag at all, because sending it to a bucket **without** Object Lock does not get ignored — the whole call fails with `InvalidArgument`.
+
+A trail's history is measured in tens of thousands of versions, so emptying it by hand is not the same task as emptying an ordinary bucket. Consider whether deleting an audit trail is really what you want before reaching for it.
 
 ## What it does not cover
 
