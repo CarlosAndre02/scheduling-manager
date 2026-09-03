@@ -201,7 +201,7 @@ sudo tee /opt/app/deploy.sh < <the rendered script> && sudo chmod 0750 /opt/app/
 
 **The application container cannot read the instance's credentials, but the host can.** The metadata hop limit is 1, which the Docker bridge exceeds. A compromise of the host is still a compromise of the role.
 
-**Logs stay on the instance.** The Docker daemon caps them at 10 MB per file and three files, so the disk cannot fill; nothing is shipped anywhere, so a replaced instance takes its history with it.
+**Logs stay on the instance.** The Docker daemon caps them at 10 MB per file and three files, so the disk cannot fill; nothing is shipped anywhere, so a replaced instance takes its history with it — [docs/observability-and-monitoring.md](../../../docs/observability-and-monitoring.md).
 
 ## Security posture
 

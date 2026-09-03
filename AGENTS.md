@@ -16,6 +16,7 @@ Read the relevant one before changing an area, and update it when a flow changes
 - [docs/api.md](docs/api.md) — setup, running, testing, HTTP contract, dependency practice, migrations in production
 - [docs/ci-cd.md](docs/ci-cd.md) — what runs on every push, why each gate sits where it does, how a release is named and installed, Dependabot
 - [docs/rollback.md](docs/rollback.md) — what a rollback undoes and what it cannot, the schema invariant, expand and contract
+- [docs/observability-and-monitoring.md](docs/observability-and-monitoring.md) — the vocabulary, what the system emits, and the order to add the rest in
 - [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail, and the pitfalls found along the way
 - [docs/aws-stack-implementation.md](docs/aws-stack-implementation.md) — how the infrastructure is split into Terraform stacks, what each owns, apply order, state backend
 - [docs/vpc.md](docs/vpc.md) — the network model: VPC, subnets, AZs, internet/NAT gateways, VPC endpoints, security groups
