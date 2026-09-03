@@ -1,12 +1,20 @@
+import { randomUUID } from "node:crypto";
+
 import cors from "cors";
-import express, { Request, Response } from "express";
+import express, { NextFunction, Request, Response } from "express";
 import helmet from "helmet";
+import pinoHttp from "pino-http";
 
 import { userRouter } from "./modules/user/routes";
 import { meetingRouter } from "./modules/meeting/routes";
 import { schedulingRouter } from "./modules/scheduling/routes";
 import { errorHandler, notFoundHandler } from "./shared/core/errorHandler";
 import { isShuttingDown } from "./shared/core/lifecycle";
+import { logger } from "./shared/core/logger";
+import {
+  getRequestId,
+  runWithRequestContext,
+} from "./shared/core/requestContext";
 import { isDatabaseReachable } from "./shared/database/probe";
 
 const app = express();
@@ -41,6 +49,52 @@ const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS ?? "")
   .filter(Boolean);
 
 app.set("trust proxy", TRUSTED_PROXY_HOPS);
+
+// First, so every later line — including a body the parser rejects before any
+// route runs — carries the id that identifies the request that produced it.
+//
+// The id is generated here and never read from the request. Accepting one from
+// a caller would let it group its traffic with someone else's, or write
+// newlines into a field that log queries are grouped by.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const requestId = randomUUID();
+
+  // Echoed so a caller reporting a problem can quote the id rather than a time.
+  res.setHeader("X-Request-Id", requestId);
+
+  runWithRequestContext(requestId, next);
+});
+
+app.use(
+  pinoHttp({
+    logger,
+    genReqId: () => getRequestId() as string,
+
+    // Probes would dominate the volume without saying anything: the proxy polls
+    // /health every few seconds and the image's health check polls /ready.
+    // Their outcome is already visible as routing and as container health.
+    autoLogging: {
+      ignore: (req) => req.url === "/health" || req.url === "/ready",
+    },
+
+    // A client's own mistake is not a server error, and treating it as one
+    // makes the error level useless for alerting.
+    customLogLevel: (_req, res, err) => {
+      if (err || res.statusCode >= 500) return "error";
+      if (res.statusCode >= 400) return "warn";
+      return "info";
+    },
+
+    customAttributeKeys: { responseTime: "duration_ms" },
+
+    // Deliberately narrow. The defaults serialise every header, which is both
+    // the bulk of the record and where a credential would travel.
+    serializers: {
+      req: (req) => ({ method: req.method, url: req.url }),
+      res: (res) => ({ status: res.statusCode }),
+    },
+  }),
+);
 
 // Before the body parsers, so a response they reject on their own — a body over
 // the limit, malformed JSON — carries the headers too.

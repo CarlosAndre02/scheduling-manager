@@ -291,7 +291,11 @@ Domain messages (`"Email is not valid"`) are deliberate and safe to show. Anythi
 { "message": "Internal server error", "errorId": "6f1c8e4a-..." }
 ```
 
-The full stack is written to the server log under that same id. Outside production the response also carries a `detail` field with the original message, so local debugging is unaffected.
+The full stack is written to the server log under that same id, as a field rather than as text. Outside production the response also carries a `detail` field with the original message, so local debugging is unaffected.
+
+**Every response also carries an `X-Request-Id` header**, generated per request and never read from the caller — accepting one would let a client file its traffic under an id someone else is being investigated by. The record for a failure carries both ids, so a report quoting either becomes a lookup instead of a search by timestamp.
+
+**A driver error is redacted before it is logged.** The message and the stack embed the values the query was called with, and those values are the request body. Pino's `redact` matches paths and cannot reach inside a string, so [redactQueryParams](../src/shared/core/redactQueryParams.ts) rewrites the parameter line wherever it appears — while keeping the SQL and the cause chain, which is where the failure is actually named.
 
 An `uncaughtException` or `unhandledRejection` is not turned into a response: the process logs it and exits with code 1, leaving a restart to the orchestrator. Once either fires the process state cannot be trusted, so there is no attempt to drain first.
 

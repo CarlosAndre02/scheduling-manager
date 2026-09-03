@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextFunction, Request, Response } from "express";
 
 import { DefaultError } from "./errors";
+import { logger } from "./logger";
 
 export function notFoundHandler(_req: Request, res: Response): Response {
   return res.status(404).json({ message: "Route not found" });
@@ -39,8 +40,12 @@ export function errorHandler(
   if (res.headersSent) return next(err);
 
   if (err instanceof DefaultError) {
-    console.log(`\n[${err.name}]: An Application error occurred`);
-    console.error(err.message);
+    // A rejected request is the API working, not failing. Logged at warn so the
+    // error level keeps meaning "nobody expected this".
+    logger.warn(
+      { err: { type: err.name, message: err.message } },
+      "request rejected",
+    );
     return res.status(err.code).json({ message: err.message });
   }
 
@@ -55,8 +60,11 @@ export function errorHandler(
   // names, SQL fragments and parameter values. The client gets an id, the
   // details stay in the server log.
   const errorId = randomUUID();
-  console.log(`\n[InternalError]: errorId=${errorId}`);
-  console.error(err);
+
+  // One record, not two. The id and the stack as fields of the same object is
+  // what makes `error_id` something to filter on rather than a substring to
+  // search for — and what keeps them together when two requests fail at once.
+  logger.error({ err, error_id: errorId }, "unhandled error");
 
   return res.status(500).json({
     message: "Internal server error",

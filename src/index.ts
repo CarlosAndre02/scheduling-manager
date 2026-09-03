@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 import app from "./app";
+import { logger } from "./shared/core/logger";
 import { markShuttingDown } from "./shared/core/lifecycle";
 import { pool } from "./shared/database/conn";
 
@@ -9,8 +10,7 @@ const DRAIN_DELAY_MS = Number(process.env.SHUTDOWN_DRAIN_DELAY_MS ?? 5000);
 const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 15000);
 
 const server = app.listen(PORT, () => {
-  console.log(`\nServer is running on port ${PORT}`);
-  console.log(`Hello World endpoint: http://localhost:${PORT}/`);
+  logger.info({ port: PORT }, "server listening");
 });
 
 // Both must stay above the load balancer idle timeout (60s on an AWS ALB).
@@ -30,13 +30,14 @@ async function shutdown(signal: string) {
   if (shutdownStarted) return;
   shutdownStarted = true;
 
-  console.log(`\n[${signal}] Draining - /health now reports unhealthy`);
+  logger.info({ signal }, "draining — /health now reports unhealthy");
   markShuttingDown();
   await wait(DRAIN_DELAY_MS);
 
   const forceExit = setTimeout(() => {
-    console.error(
-      `Shutdown exceeded ${SHUTDOWN_TIMEOUT_MS}ms, closing open connections`,
+    logger.error(
+      { timeout_ms: SHUTDOWN_TIMEOUT_MS },
+      "shutdown exceeded its timeout, closing open connections",
     );
     server.closeAllConnections();
     process.exit(1);
@@ -51,7 +52,7 @@ async function shutdown(signal: string) {
   clearTimeout(forceExit);
   await pool.end();
 
-  console.log("Shutdown complete");
+  logger.info("shutdown complete");
   process.exit(0);
 }
 
@@ -61,8 +62,7 @@ process.once("SIGINT", () => void shutdown("SIGINT"));
 // Past this point the process state cannot be trusted, so there is no attempt
 // to drain: log what happened and let the orchestrator start a fresh instance.
 function crash(reason: string, err: unknown) {
-  console.error(`\n[${reason}] Terminating`);
-  console.error(err);
+  logger.fatal({ err, reason }, "terminating");
   process.exit(1);
 }
 

@@ -3,6 +3,7 @@ import path from "node:path";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 
 import { db, pool } from "./conn";
+import { logger } from "../core/logger";
 
 // Arbitrary but stable: every runner competes for this same lock id.
 const MIGRATION_LOCK_ID = 4242424242;
@@ -25,9 +26,9 @@ async function main() {
     }
 
     try {
-      console.log(`Applying migrations from ${migrationsFolder}`);
+      logger.info({ migrationsFolder }, "applying migrations");
       await migrate(db, { migrationsFolder });
-      console.log("Migrations up to date");
+      logger.info("migrations up to date");
     } finally {
       await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_ID]);
     }
@@ -38,7 +39,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Migration failed");
-  console.error(err);
+  logger.fatal({ err }, "migration failed");
   process.exit(1);
 });

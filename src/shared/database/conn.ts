@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { Pool, type PoolConfig } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
+import { logger } from "../core/logger";
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -62,8 +63,7 @@ export const pool = new Pool({
 // client that is running a query are not routed here: those reject the query
 // itself and surface as a normal request failure.
 pool.on("error", (err) => {
-  console.error("\n[DatabasePool] Idle client error, dropping it");
-  console.error(err);
+  logger.error({ err }, "idle database client failed, dropping it");
 });
 
 export const db = drizzle(pool, {
