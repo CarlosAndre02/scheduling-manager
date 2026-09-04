@@ -164,18 +164,20 @@ Nothing here helps during an incident, and none of it needs to arrive within the
 
 ## What this system emits, and what it leaves unanswered
 
-| Source                       | Emits                                                               | Where it goes                 |
-| ---------------------------- | ------------------------------------------------------------------- | ----------------------------- |
-| Application                  | one JSON record per event, carrying the request id that produced it | the container log             |
-| Connection pool              | idle-client errors, so a dropped connection is not fatal            | the container log             |
-| Reverse proxy access log     | **4xx and 5xx only** — successful traffic is filtered out           | the container log             |
-| Docker daemon                | caps each container at 10 MB × 3 files                              | the instance's disk           |
-| Probes (`/health`, `/ready`) | a binary verdict, polled                                            | the proxy and the deploy gate |
-| Billing alarm                | a threshold on spend                                                | email                         |
+| Source                       | Emits                                                               | Where it goes                      |
+| ---------------------------- | ------------------------------------------------------------------- | ---------------------------------- |
+| Application                  | one JSON record per event, carrying the request id that produced it | CloudWatch Logs, and a local cache |
+| Connection pool              | idle-client errors, so a dropped connection is not fatal            | CloudWatch Logs, and a local cache |
+| Reverse proxy access log     | **4xx and 5xx only** — successful traffic is filtered out           | CloudWatch Logs, and a local cache |
+| Docker daemon                | caps the local cache each container keeps                           | the instance's disk                |
+| Probes (`/health`, `/ready`) | a binary verdict, polled                                            | the proxy and the deploy gate      |
+| Billing alarm                | a threshold on spend                                                | email                              |
 
 Three consequences follow, and each is a design trade rather than an oversight:
 
-**Logs that live only on the instance die with the instance.** Replacing a host is routine here — it is how a template change is delivered and how the operating system is upgraded — so the history is lost on a normal operation, not on a disaster. That is the right trade for a disk and the wrong one for an investigation.
+**Shipping is what makes the host disposable.** Replacing an instance is routine — it is how a template change is delivered and how the operating system is upgraded — so logs kept only on its disk would be lost on a normal operation rather than in a disaster. The `awslogs` driver sends them as they are written, and the daemon keeps a local cache alongside, so `docker logs` and the deploy gate's failure output still work even though the remote driver cannot be read back.
+
+**The socket proxy is deliberately not shipped.** It narrates every discovery poll the reverse proxy makes, which is volume without information — and ingestion is billed by the gigabyte.
 
 **Filtering the access log to 4xx and 5xx is the correct default and has a blind spot.** Successful traffic at volume is most of the log and answers nothing a metric would not — but data taken through requests that returned `200` leaves no record at all, which is exactly the shape of a credential-abuse incident.
 
@@ -237,10 +239,42 @@ Plus `logs:CreateLogStream` and `logs:PutLogEvents` on the instance role. Two tr
 Grouping and release-tagging are what connect a spike to the deploy that caused it. The release tag is free here, because a release already **is** a commit SHA:
 
 ```ts
-Sentry.init({ release: process.env.APP_IMAGE_TAG, environment: "production" });
+Sentry.init({
+  release: process.env.APP_RELEASE,
+  environment: process.env.NODE_ENV,
+});
 ```
 
 That completes the pair rollback depends on: the tracker says _this error appeared in `c5ee186`, 40 000 events, 118 users_, and `scripts/release.sh <previous sha>` is the answer — see [rollback.md](rollback.md). Without the tag there is an error and no culprit.
+
+#### Configuring it
+
+The DSN is the only thing the tracker needs, and the application runs without it: absent, [errorTracking.ts](../src/shared/core/errorTracking.ts) initialises nothing. That is what keeps a third-party account from being a requirement for running the project, and it is why every local run and every test reports nowhere.
+
+| Where      | How                                                                                       |
+| ---------- | ----------------------------------------------------------------------------------------- |
+| Production | a `SecureString` at `/<project>/sentry-dsn`, read at deploy time and written to `app.env` |
+| Local      | left empty, so nothing is reported and the free quota is not spent on development         |
+
+The parameter is read with a tolerant lookup: an absent DSN must not be a reason a release cannot ship. Delivering it needs the instance rebuilt, because the deploy script and the Compose file come from user data — [ec2.md](ec2.md#the-image-tag-does-not-live-in-user-data).
+
+**The region is chosen when the organisation is created and cannot be changed afterwards.** For personal data under a Brazilian or European obligation that is a decision, not a default.
+
+#### What the SDK collects, and the option that reverses it
+
+`dataCollection` names every field, including the ones already off, and that is not verbosity. The SDK resolves the object against one of two bases: **absent**, it uses the restrictive mapping behind `sendDefaultPii: false`; **present** — even holding a single field — it switches to permissive defaults, and every field left out reverts to collecting.
+
+So `dataCollection: { stackFrameVariables: false }` turns off local variables and turns **on** request bodies, cookies, user info and query values. The narrower-looking edit is the wider one.
+
+`stackFrameVariables` is why the block exists at all. It stays `true` even under `sendDefaultPii: false`, and the local-variables integration ships in the default set, so an exception inside a use case sends that frame's locals — which is the DTO, with the name and the email in it.
+
+#### In the tracker's own settings
+
+Three things the default project does not do:
+
+- **Replace the "any new issue" rule.** It is noise the moment there is traffic, and an alert that fires without consequence teaches people to ignore the next one. Two rules earn their place: a new issue **or a regression** on the latest release, which is the signal a rollback acts on; and a known issue crossing a volume threshold, which the first rule cannot see because the issue is not new.
+- **Rate-limit the client key.** `captureError` runs on every `500`, so a release that cannot reach the database spends a monthly quota in minutes — during the incident, and then there is no quota left to watch it with.
+- **Add this API's free-text fields to server-side scrubbing.** `email`, `name`, `purpose` and `description` are not in anyone's default list. Client-side redaction runs before the send and this runs after; the point of both is that a path escaping one is still caught by the other.
 
 ### 5. OpenTelemetry — spans and metrics are one install
 

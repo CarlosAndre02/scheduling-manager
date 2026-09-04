@@ -31,6 +31,9 @@ cp .env.example .env
 | `DATABASE_STATEMENT_TIMEOUT_MS`                       | `10000`                                                                    | Postgres cancels a query that overruns; migrations must override with `0`   |
 | `SHUTDOWN_DRAIN_DELAY_MS`                             | `0` locally, `5000`+ behind a load balancer                                | how long `/health` reports unhealthy before connections stop being accepted |
 | `SHUTDOWN_TIMEOUT_MS`                                 | `15000`                                                                    | grace period for in-flight requests before sockets are forced closed        |
+| `LOG_LEVEL`                                           | `info`                                                                     | below `info` in production is a recurring bill — ingestion is billed per GB |
+| `SENTRY_DSN`                                          | empty                                                                      | empty disables error tracking; every local run and test is in that state    |
+| `APP_RELEASE`                                         | empty                                                                      | the deployed commit, so an error names the release that introduced it       |
 
 **`TRUSTED_PROXY_HOPS` counts the proxies that append `X-Forwarded-For`, not the network hops.** Traefik, Caddy, an ALB and CloudFront all append it by default; nginx appends nothing unless configured with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`. A bare `proxy_pass` therefore stays at `0`. See [architecture.md](architecture.md#input) for why over-counting is worse than under-counting.
 
@@ -324,7 +327,9 @@ New error types belong in [src/shared/core/errors.ts](../src/shared/core/errors.
 
 ## Testing
 
-The suite is integration-only: it drives a **real server over HTTP** with supertest against the Docker Postgres. There are no unit tests and nothing is mocked.
+The suite is integration-only: it drives a **real server over HTTP** with supertest against the Docker Postgres, and nothing is mocked.
+
+One unit test exists, in [tests/unit](../tests/unit), and the reason is the rule that permits the exception: log redaction is a pure string transform, and provoking it over HTTP would mean taking the database down mid-run to produce a driver error. A test that needs the system broken in order to run is a test nobody runs.
 
 ### Full run
 

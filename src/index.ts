@@ -1,7 +1,19 @@
 import "dotenv/config";
 
-import app from "./app";
+import { randomUUID } from "node:crypto";
+
+import {
+  captureError,
+  flushErrorTracking,
+  initErrorTracking,
+} from "./shared/core/errorTracking";
 import { logger } from "./shared/core/logger";
+
+// Before the app is imported, so a failure while the modules themselves are
+// loading is still reported.
+initErrorTracking();
+
+import app from "./app";
 import { markShuttingDown } from "./shared/core/lifecycle";
 import { pool } from "./shared/database/conn";
 
@@ -52,6 +64,10 @@ async function shutdown(signal: string) {
   clearTimeout(forceExit);
   await pool.end();
 
+  // Bounded by the same budget as the rest of the shutdown: a tracker that
+  // cannot be reached must not be what keeps the process alive.
+  await flushErrorTracking(2_000);
+
   logger.info("shutdown complete");
   process.exit(0);
 }
@@ -63,7 +79,11 @@ process.once("SIGINT", () => void shutdown("SIGINT"));
 // to drain: log what happened and let the orchestrator start a fresh instance.
 function crash(reason: string, err: unknown) {
   logger.fatal({ err, reason }, "terminating");
-  process.exit(1);
+
+  // The one place a flush is worth waiting for: this process is about to stop
+  // existing, and the event describing why has nowhere else to go.
+  captureError(err, randomUUID());
+  void flushErrorTracking(2_000).finally(() => process.exit(1));
 }
 
 process.on("uncaughtException", (err) => crash("uncaughtException", err));

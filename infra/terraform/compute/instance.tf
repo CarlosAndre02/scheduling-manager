@@ -28,6 +28,8 @@ locals {
 
     compose_yaml = templatefile("${path.module}/templates/docker-compose.yaml.tftpl", {
       project            = var.project
+      region             = var.region
+      log_group          = aws_cloudwatch_log_group.app.name
       traefik_image      = local.traefik_image
       socket_proxy_image = local.socket_proxy_image
       tls_enabled        = local.tls_enabled

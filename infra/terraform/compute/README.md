@@ -11,6 +11,7 @@ The host that serves the application: one EC2 instance, a reverse proxy terminat
 | IAM role and profile | pull one ECR repository, read `/<project>/*` in Parameter Store, accept Session Manager |
 | SSM parameters       | `image-tag` and `app-replicas` — what a deploy reads                                    |
 | SSM document         | the only command the CI role may run on the instance, and it takes no arguments         |
+| CloudWatch log group | where container output goes, with a declared retention                                  |
 | Route 53 A record    | only when `domain_name` is set                                                          |
 
 On the instance: Traefik on 80 and 443, `app_replicas` application containers, and a socket proxy between Traefik and the Docker API.
@@ -201,7 +202,7 @@ sudo tee /opt/app/deploy.sh < <the rendered script> && sudo chmod 0750 /opt/app/
 
 **The application container cannot read the instance's credentials, but the host can.** The metadata hop limit is 1, which the Docker bridge exceeds. A compromise of the host is still a compromise of the role.
 
-**Logs stay on the instance.** The Docker daemon caps them at 10 MB per file and three files, so the disk cannot fill; nothing is shipped anywhere, so a replaced instance takes its history with it — [docs/observability-and-monitoring.md](../../../docs/observability-and-monitoring.md).
+**Metrics and traces stay unshipped.** Container output reaches CloudWatch Logs, so a replaced instance no longer takes its history with it, but there is no metric pipeline and nothing aggregates the proxy's `429`s — a client throttled continuously and a one-off burst look alike until someone reads the log. [docs/observability-and-monitoring.md](../../../docs/observability-and-monitoring.md) covers the order the rest goes in.
 
 ## Security posture
 

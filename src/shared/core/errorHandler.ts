@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextFunction, Request, Response } from "express";
 
 import { DefaultError } from "./errors";
+import { captureError } from "./errorTracking";
 import { logger } from "./logger";
 
 export function notFoundHandler(_req: Request, res: Response): Response {
@@ -65,6 +66,7 @@ export function errorHandler(
   // what makes `error_id` something to filter on rather than a substring to
   // search for — and what keeps them together when two requests fail at once.
   logger.error({ err, error_id: errorId }, "unhandled error");
+  captureError(err, errorId);
 
   return res.status(500).json({
     message: "Internal server error",

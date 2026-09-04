@@ -86,6 +86,20 @@ variable "image_tag" {
   }
 }
 
+# CloudWatch bills log storage monthly and applies no expiry unless one is
+# declared. Long enough to investigate an incident nobody noticed for a week,
+# short enough that the bill does not grow forever.
+variable "log_retention_days" {
+  description = "How long shipped container logs are kept. Zero would mean forever, which is why it is not an option here."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365], var.log_retention_days)
+    error_message = "Must be one of the retention periods CloudWatch accepts."
+  }
+}
+
 variable "app_replicas" {
   description = "Application containers behind the proxy. Two is the floor worth running: Docker marks an unhealthy container but does nothing about it, so with one container a wedged process is an outage until someone notices."
   type        = number

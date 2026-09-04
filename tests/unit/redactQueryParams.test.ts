@@ -63,3 +63,27 @@ describe("redactQueryParams", () => {
     expect(redactQueryParams(record)).toEqual(record);
   });
 });
+
+// The tracker applies the same transform before an event leaves the process:
+// shipping query parameters to a third party is a wider disclosure than writing
+// them to a disk we own.
+describe("redactQueryParams on a tracker event", () => {
+  it("Should reach values nested inside an event payload", () => {
+    const event = {
+      release: "c5ee186",
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value: "Failed query: x\nparams: someone@example.com",
+          },
+        ],
+      },
+    };
+
+    const redacted = redactQueryParams(event);
+
+    expect(JSON.stringify(redacted)).not.toContain("someone@example.com");
+    expect(redacted.release).toBe("c5ee186");
+  });
+});

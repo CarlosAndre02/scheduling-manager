@@ -19,6 +19,8 @@ networks:
     internal: true
 
 services:
+  # No logging block: the socket proxy narrates every discovery poll Traefik
+  # makes, which is volume without information, and ingestion is billed by it.
   socket-proxy:
     image: ${socket_proxy_image}
     restart: unless-stopped
@@ -40,6 +42,19 @@ services:
     restart: unless-stopped
     depends_on: [socket-proxy]
     networks: [edge, socket]
+
+    # Shipped, not kept. The instance is disposable, so its disk is the wrong
+    # place for the only copy — see docs/observability-and-monitoring.md.
+    #
+    # The daemon keeps a local cache alongside this, so `docker logs` and the
+    # deploy gate's failure output still work even though awslogs cannot be
+    # read back.
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${region}
+        awslogs-group: ${log_group}
+        awslogs-stream-prefix: traefik
     ports:
       - "80:80"
 %{ if tls_enabled ~}
@@ -54,6 +69,19 @@ services:
     image: $${APP_IMAGE}
     restart: unless-stopped
     networks: [edge]
+
+    # Shipped, not kept. The instance is disposable, so its disk is the wrong
+    # place for the only copy — see docs/observability-and-monitoring.md.
+    #
+    # The daemon keeps a local cache alongside this, so `docker logs` and the
+    # deploy gate's failure output still work even though awslogs cannot be
+    # read back.
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${region}
+        awslogs-group: ${log_group}
+        awslogs-stream-prefix: app
     deploy:
       replicas: $${APP_REPLICAS}
 
@@ -68,15 +96,20 @@ services:
     # silently, as an exit code of 137 in a log nobody reads.
     stop_grace_period: 45s
 
-    # Holds DATABASE_URL, written at deploy time from Parameter Store with mode
-    # 600. Kept apart from .env, which Compose reads for substitution and which
-    # holds nothing secret.
+    # Holds DATABASE_URL and, when one is configured, SENTRY_DSN — written at
+    # deploy time from Parameter Store with mode 600. Kept apart from .env,
+    # which Compose reads for substitution and which holds nothing secret.
     env_file:
       - ./app.env
 
     environment:
       NODE_ENV: production
       SERVER_PORT: "4000"
+
+      # The commit the image was built from, and the value `scripts/release.sh`
+      # takes to roll back. Tagging errors with it is what turns a spike into a
+      # named culprit — docs/rollback.md.
+      APP_RELEASE: "$${APP_RELEASE}"
 
       # One proxy in front, appending exactly one entry to X-Forwarded-For.
       # Zero would make every caller look like the proxy; trusting all of them
