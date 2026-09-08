@@ -12,6 +12,9 @@ The host that serves the application: one EC2 instance, a reverse proxy terminat
 | SSM parameters       | `image-tag` and `app-replicas` — what a deploy reads                                    |
 | SSM document         | the only command the CI role may run on the instance, and it takes no arguments         |
 | CloudWatch log group | where container output goes, with a declared retention                                  |
+| Metric filters       | three numbers read out of that log: server errors, request duration, readiness failures |
+| CloudWatch alarms    | six symptoms plus an optional seventh, delivered to an SNS topic                        |
+| CloudWatch dashboard | one page: latency, throughput, errors, credits, disk, and two queries over the logs     |
 | Route 53 A record    | only when `domain_name` is set                                                          |
 
 On the instance: Traefik on 80 and 443, `app_replicas` application containers, and a socket proxy between Traefik and the Docker API.
@@ -202,7 +205,7 @@ sudo tee /opt/app/deploy.sh < <the rendered script> && sudo chmod 0750 /opt/app/
 
 **The application container cannot read the instance's credentials, but the host can.** The metadata hop limit is 1, which the Docker bridge exceeds. A compromise of the host is still a compromise of the role.
 
-**Metrics and traces stay unshipped.** Container output reaches CloudWatch Logs, so a replaced instance no longer takes its history with it, but there is no metric pipeline and nothing aggregates the proxy's `429`s — a client throttled continuously and a one-off burst look alike until someone reads the log. [docs/observability-and-monitoring.md](../../../docs/observability-and-monitoring.md) covers the order the rest goes in.
+**No metrics pipeline beyond the alarms.** Container output reaches CloudWatch Logs, so a replaced instance no longer takes its history with it, but there is no metric pipeline and nothing aggregates the proxy's `429`s — a client throttled continuously and a one-off burst look alike until someone reads the log. [docs/observability-and-monitoring.md](../../../docs/observability-and-monitoring.md) covers the order the rest goes in.
 
 ## Security posture
 

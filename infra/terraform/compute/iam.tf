@@ -84,6 +84,23 @@ data "aws_iam_policy_document" "instance_permissions" {
     ]
   }
 
+  # PutMetricData takes no resource, so the namespace condition is the only
+  # scope available: the agent may publish this project's metrics and nothing
+  # else's. Without it the grant is "write any metric in the account", and a
+  # metric is billed by whoever creates it.
+  statement {
+    sid       = "PublishHostMetrics"
+    effect    = "Allow"
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = [var.project]
+    }
+  }
+
   # The database URL is a SecureString under the AWS managed key, which cannot
   # be named here: alias/aws/ssm does not exist until the account's first
   # SecureString is written, so a data source lookup would fail on a clean

@@ -11,6 +11,16 @@ import { getRequestId } from "./requestContext";
 
 const DSN = process.env.SENTRY_DSN;
 
+// Zero disables span collection entirely. Above zero, the SDK's OpenTelemetry
+// instrumentation times every Express handler and every `pg` query, which is
+// where the answers to "why is this endpoint slow" and "is this an N+1" come
+// from — the questions no counter can answer.
+//
+// Sampled rather than complete because spans are billed by volume and a
+// percentage answers the same question: a slow query is slow in every sample.
+// Raising it is a deploy, not a rebuild — the value comes from Parameter Store.
+const TRACES_SAMPLE_RATE = Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0);
+
 /**
  * Inert without a DSN, which is the state every local run and every test is in.
  * A tracker that refused to start without one would make the credential a
@@ -28,10 +38,12 @@ export function initErrorTracking(): void {
     release: process.env.APP_RELEASE,
     environment: process.env.NODE_ENV ?? "development",
 
-    // Off. Tracing here would sample every request to a third party for a
-    // single-service system that has no second hop to attribute time to, and
-    // the free allowance is measured in events.
-    tracesSampleRate: 0,
+    // The SDK owns the OpenTelemetry setup — it registers the global tracer
+    // provider and ships the Express and `pg` instrumentation. A second OTel
+    // SDK alongside it would duplicate the packages and fight for that
+    // registry; the escape hatch, if the backend ever has to change, is
+    // `skipOpenTelemetrySetup` and a provider of one's own.
+    tracesSampleRate: TRACES_SAMPLE_RATE,
 
     // The same redaction the log applies. A driver error embeds the values the
     // query was called with, and shipping them to a third party is a wider

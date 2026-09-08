@@ -276,15 +276,17 @@ Three things the default project does not do:
 - **Rate-limit the client key.** `captureError` runs on every `500`, so a release that cannot reach the database spends a monthly quota in minutes — during the incident, and then there is no quota left to watch it with.
 - **Add this API's free-text fields to server-side scrubbing.** `email`, `name`, `purpose` and `description` are not in anyone's default list. Client-side redaction runs before the send and this runs after; the point of both is that a path escaping one is still caught by the other.
 
-### 5. OpenTelemetry — spans and metrics are one install
+### 5. Spans, through the OpenTelemetry that is already running
 
-`@opentelemetry/auto-instrumentations-node` instruments Express and `pg` without touching application code, and emits both shapes at once. They are not sequential steps.
+What earns spans on a single service is not distributed tracing, which has nothing to stitch. It is that the `pg` instrumentation times **every query** — which is where the answers to N+1 and slow-query questions come from, and the only way to know the database is at fault before guessing.
 
-What earns it on a single service is not distributed tracing, which has nothing to stitch. It is that the `pg` instrumentation times **every query**, which is where the answers to N+1 and slow-query questions come from — and the only way to know the database is at fault before guessing.
+**The error tracker is the OpenTelemetry installation.** Sentry's Node SDK is built on it: it registers the global tracer provider and ships the Express and `pg` instrumentation in its default set. Installing `@opentelemetry/auto-instrumentations-node` alongside would duplicate the packages and contend for that registry — the SDK says so out loud, warning that it replaced a pre-existing one.
 
-Being vendor-neutral is the second reason: instrument once, and the backend becomes configuration.
+So the step is a sample rate, not an install. Zero collects nothing; above zero, handler and query timings appear per transaction. Sampling rather than completeness because spans are billed by volume and answer the same question either way: a slow query is slow in every sample.
 
-**What not to do: run the backend on the same instance.** A Prometheus and Loki stack there would compete with the application for 2 GB of memory, and the observer would die with the observed — the host is disposable by design.
+**Vendor neutrality survives as an escape hatch rather than as the default.** Moving to another backend means `skipOpenTelemetrySetup: true` and a provider of one's own, with Sentry's span processor wired into it. Worth knowing before the day it matters, and not worth paying for in advance.
+
+**What not to do: run a backend on the same instance.** A Prometheus and Loki stack would compete with the application for 2 GB of memory, and the observer would die with the observed — the host is disposable by design.
 
 ### 6. Alarms on symptoms, not causes
 
@@ -297,6 +299,34 @@ High CPU is not an incident; a slow request is. An alarm that fires without cons
 | `/ready` failing       | the dependency, not the process                                                                                                                                                 |
 | **CPU credit balance** | a burstable instance in `unlimited` mode bills surplus CPU rather than throttling, so absorbed traffic converts to an invoice — and a spending alarm reports it after the money |
 | **Disk usage**         | released images accumulate, because immutable tags mean none is ever dangling — [rollback.md](rollback.md#why-it-is-fast-and-what-that-costs)                                   |
+| **Instance health**    | there is no Auto Scaling group, so a failed host stays failed until someone looks — this is what makes someone look                                                             |
+| Traffic collapsing     | zero requests are zero errors, so the error alarm stays quiet while the application is healthy and unreachable                                                                  |
+
+#### Where the numbers come from
+
+Three of the five are read out of the log the application already writes, with a metric filter. That is a deliberate trade against cardinality: one filter is one metric, while publishing the same number dimensioned by route and status would be one per combination. Per-route detail comes from querying the logs instead, which creates no metric at all.
+
+| Alarm           | Source                                                                                                                                  |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 5xx rate        | metric filter on `$.res.status >= 500`                                                                                                  |
+| p95 latency     | metric filter extracting `$.duration_ms`, alarmed on the `p95` statistic                                                                |
+| readiness       | metric filter on the probe's own failure message                                                                                        |
+| CPU credits     | published by EC2 with no agent                                                                                                          |
+| disk usage      | **needs an agent**: disk usage and memory live inside the operating system, which the hypervisor cannot see                             |
+| instance health | published by EC2 with no agent, combining the instance check and the hardware one                                                       |
+| traffic         | `SampleCount` on the duration metric — a filter that extracts a value publishes the count beside it, so this costs no metric of its own |
+
+Two details decide whether these work rather than merely exist:
+
+- **A filter that matches nothing publishes nothing**, so an alarm over it sits in `INSUFFICIENT_DATA` rather than reporting health. A default value of zero on the transformation is what makes silence mean "no errors" instead of "no data".
+- **The subscription must be confirmed.** AWS emails a link and the subscription stays pending until it is clicked. Nothing about the alarm reports that it is delivering nowhere.
+- **An alarm with no traffic behind it is noise.** Silence means something only once there is something to lose, and probes are excluded from request logging on purpose — so the traffic alarm stays uncreated until a floor is set for it. One that fires every night takes the others down with it.
+
+#### Seeing it without an incident
+
+Alarms answer "is something wrong now". A dashboard answers "what does normal look like", which is the question that makes a threshold choosable at all: every number in the alarms above is a starting point until a week of real traffic corrects it.
+
+It is declared in Terraform for the same reason every other resource is — one drawn in the console is lost with the account and describes nothing anyone can review. Two of its panels are **queries over the logs** rather than metrics, which is the cardinality trade taken in the other direction: per-route latency and recent failures computed on demand cost a fraction of a cent per gigabyte scanned and create no metric.
 
 **Latency must be a distribution.** Ninety-nine requests at 10 ms and one at 3 s average to 40 ms, and the number describing the experience is the p99. Emit a histogram, never a gauge.
 

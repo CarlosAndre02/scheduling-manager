@@ -100,6 +100,53 @@ variable "log_retention_days" {
   }
 }
 
+variable "alert_email" {
+  description = "Where alarms are delivered. AWS sends a confirmation link and the subscription is silent until it is clicked."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.alert_email))
+    error_message = "Must be an email address."
+  }
+}
+
+# Thresholds are the whole design of an alarm. Too tight and it fires without a
+# consequence, which teaches people to ignore it; too loose and it reports an
+# incident nobody can still act on. These are starting points to correct once
+# there is a week of real traffic to correct them against.
+variable "error_alarm_count" {
+  description = "Server errors in five minutes that constitute an incident."
+  type        = number
+  default     = 5
+}
+
+variable "latency_alarm_ms" {
+  description = "p95 request duration, in milliseconds, held for two periods."
+  type        = number
+  default     = 1000
+}
+
+variable "cpu_credit_alarm_balance" {
+  description = "CPU credits remaining. Below this the instance is running on surplus, which in unlimited mode is billed rather than throttled."
+  type        = number
+  default     = 60
+}
+
+# Zero disables the alarm rather than setting an impossible threshold, because
+# the useful value is unknowable before there is traffic to measure. Turn it on
+# with the floor a quiet hour should still clear.
+variable "traffic_alarm_min_requests" {
+  description = "Requests per five minutes below which silence is treated as an incident. Zero leaves the alarm uncreated."
+  type        = number
+  default     = 0
+}
+
+variable "disk_alarm_percent" {
+  description = "Root volume usage. Released images accumulate, and reclaiming them shortens the rollback window."
+  type        = number
+  default     = 80
+}
+
 variable "app_replicas" {
   description = "Application containers behind the proxy. Two is the floor worth running: Docker marks an unhealthy container but does nothing about it, so with one container a wedged process is an outage until someone notices."
   type        = number

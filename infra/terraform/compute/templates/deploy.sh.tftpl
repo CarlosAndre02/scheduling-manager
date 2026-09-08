@@ -59,6 +59,14 @@ if [ -n "$SENTRY_DSN" ]; then
   printf 'SENTRY_DSN=%s\n' "$SENTRY_DSN" >> app.env
 fi
 
+# Not a secret, and here anyway: it belongs with the DSN it is meaningless
+# without, and reading it at deploy time is what makes raising it during an
+# investigation a deploy rather than a rebuild.
+TRACES_RATE=$(optional_param "/${project}/sentry-traces-sample-rate")
+if [ -n "$TRACES_RATE" ]; then
+  printf 'SENTRY_TRACES_SAMPLE_RATE=%s\n' "$TRACES_RATE" >> app.env
+fi
+
 cat > .env <<ENVFILE
 APP_IMAGE=${registry}/${project}:$TAG
 APP_RELEASE=$TAG
