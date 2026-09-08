@@ -49,12 +49,18 @@ services:
     # The daemon keeps a local cache alongside this, so `docker logs` and the
     # deploy gate's failure output still work even though awslogs cannot be
     # read back.
+    #
+    # `tag`, not `awslogs-stream-prefix`: the prefix option belongs to ECS, and
+    # the Docker driver rejects it outright — the daemon refuses to create the
+    # container, which fails cloud-init and leaves the host with no application
+    # at all. `tag` names the stream, and the container name says which replica
+    # wrote the line.
     logging:
       driver: awslogs
       options:
         awslogs-region: ${region}
         awslogs-group: ${log_group}
-        awslogs-stream-prefix: traefik
+        tag: "{{.Name}}"
     ports:
       - "80:80"
 %{ if tls_enabled ~}
@@ -76,12 +82,18 @@ services:
     # The daemon keeps a local cache alongside this, so `docker logs` and the
     # deploy gate's failure output still work even though awslogs cannot be
     # read back.
+    #
+    # `tag`, not `awslogs-stream-prefix`: the prefix option belongs to ECS, and
+    # the Docker driver rejects it outright — the daemon refuses to create the
+    # container, which fails cloud-init and leaves the host with no application
+    # at all. `tag` names the stream, and the container name says which replica
+    # wrote the line.
     logging:
       driver: awslogs
       options:
         awslogs-region: ${region}
         awslogs-group: ${log_group}
-        awslogs-stream-prefix: app
+        tag: "{{.Name}}"
     deploy:
       replicas: $${APP_REPLICAS}
 

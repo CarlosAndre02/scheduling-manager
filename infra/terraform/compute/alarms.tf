@@ -119,20 +119,29 @@ resource "aws_cloudwatch_metric_alarm" "readiness" {
 
 # A burstable instance in `unlimited` mode bills surplus CPU instead of
 # throttling, so sustained load converts into an invoice rather than into
-# slowness. The spending alarm reports that after the money has been spent; this
-# reports the condition that causes it.
-resource "aws_cloudwatch_metric_alarm" "cpu_credits" {
-  alarm_name          = "${var.project}-cpu-credits-low"
-  alarm_description   = "CPU credits are draining. In unlimited mode the surplus is billed, so this is a cost alarm wearing a performance costume."
+# slowness. The spending alarm reports that after the money is gone.
+#
+# The metric is the surplus *charged*, not the credit balance. Balance looked
+# like the obvious choice and is unusable: an instance is created with zero
+# credits and accrues them over hours, so any threshold meaningful for a drain
+# is breached by every replacement — an alarm that fires on a routine operation
+# and stays on is one that trains people to ignore the set it belongs to.
+#
+# Charged surplus is zero until the instance actually exceeds its baseline on
+# borrowed capacity, which is the event worth an email.
+resource "aws_cloudwatch_metric_alarm" "cpu_surplus" {
+  alarm_name          = "${var.project}-cpu-surplus-billed"
+  alarm_description   = "The instance is running above its baseline on surplus credits, which unlimited mode bills rather than throttles. A cost alarm wearing a performance costume."
   namespace           = "AWS/EC2"
-  metric_name         = "CPUCreditBalance"
-  statistic           = "Average"
+  metric_name         = "CPUSurplusCreditsCharged"
+  statistic           = "Sum"
   period              = 300
   evaluation_periods  = 2
-  threshold           = var.cpu_credit_alarm_balance
-  comparison_operator = "LessThanThreshold"
-  treat_missing_data  = "missing"
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
 
   dimensions = {
     InstanceId = aws_instance.app.id

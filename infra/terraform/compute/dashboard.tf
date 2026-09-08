@@ -74,16 +74,14 @@ locals {
       width  = 8
       height = 6
       properties = {
-        title  = "CPU credit balance"
+        title  = "CPU credits — balance, and the surplus that is billed"
         region = var.region
         view   = "timeSeries"
         period = 300
         metrics = [
-          ["AWS/EC2", "CPUCreditBalance", "InstanceId", aws_instance.app.id, { stat = "Average" }],
+          ["AWS/EC2", "CPUCreditBalance", "InstanceId", aws_instance.app.id, { stat = "Average", label = "balance" }],
+          [".", "CPUSurplusCreditsCharged", ".", ".", { stat = "Sum", label = "billed surplus", color = "#d62728" }],
         ]
-        annotations = {
-          horizontal = [{ label = "alarm", value = var.cpu_credit_alarm_balance }]
-        }
       }
     },
     {

@@ -13,7 +13,8 @@ alert_email = "you@example.com"
 #
 # error_alarm_count        = 5      # server errors in five minutes
 # latency_alarm_ms         = 1000   # p95, held for two periods
-# cpu_credit_alarm_balance = 60     # below this, surplus CPU is being billed
+#                                  # (no credit threshold: a new instance starts
+#                                  #  at zero, so surplus *charged* is alarmed instead)
 # disk_alarm_percent       = 80     # released images accumulate
 #
 # Silence is only an incident once there is traffic to lose. Zero leaves the

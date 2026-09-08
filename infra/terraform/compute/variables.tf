@@ -126,15 +126,6 @@ variable "latency_alarm_ms" {
   default     = 1000
 }
 
-variable "cpu_credit_alarm_balance" {
-  description = "CPU credits remaining. Below this the instance is running on surplus, which in unlimited mode is billed rather than throttled."
-  type        = number
-  default     = 60
-}
-
-# Zero disables the alarm rather than setting an impossible threshold, because
-# the useful value is unknowable before there is traffic to measure. Turn it on
-# with the floor a quiet hour should still clear.
 variable "traffic_alarm_min_requests" {
   description = "Requests per five minutes below which silence is treated as an incident. Zero leaves the alarm uncreated."
   type        = number
