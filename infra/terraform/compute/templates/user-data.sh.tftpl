@@ -74,6 +74,39 @@ cat > /root/.docker/config.json <<'DOCKERCONFIG'
 DOCKERCONFIG
 chmod 0600 /root/.docker/config.json
 
+# ── host metrics ──────────────────────────────────────────────────────────────
+# EC2 publishes CPU, network and disk *I/O* on its own, and neither disk *usage*
+# nor memory: those are inside the operating system, which the hypervisor cannot
+# see. Both matter here — released images accumulate because immutable tags mean
+# none is ever dangling, and four containers share 2 GB.
+#
+# Undimensioned beyond the instance id on purpose: in CloudWatch a metric is a
+# unique combination of name and dimensions, and each one is billed.
+dnf install -y amazon-cloudwatch-agent
+
+cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json <<'CWAGENT'
+{
+  "agent": { "metrics_collection_interval": 300 },
+  "metrics": {
+    "namespace": "${project}",
+    "append_dimensions": { "InstanceId": "$${aws:InstanceId}" },
+    "aggregation_dimensions": [["InstanceId"]],
+    "metrics_collected": {
+      "disk": {
+        "resources": ["/"],
+        "measurement": [{ "name": "used_percent", "rename": "disk_used_percent" }],
+        "drop_device": true
+      },
+      "mem": {
+        "measurement": [{ "name": "mem_used_percent", "rename": "mem_used_percent" }]
+      }
+    }
+  }
+}
+CWAGENT
+
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl   -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json
+
 # ── the application directory ─────────────────────────────────────────────────
 # Every heredoc below is quoted, so the shell expands nothing: these files are
 # already rendered and their own $${...} placeholders belong to Compose.

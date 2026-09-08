@@ -26,8 +26,14 @@ locals {
     # Names the one registry the credential helper answers for.
     registry = local.registry
 
+    # The namespace the host metrics are published under, which is also the one
+    # the instance role is allowed to write to.
+    project = var.project
+
     compose_yaml = templatefile("${path.module}/templates/docker-compose.yaml.tftpl", {
       project            = var.project
+      region             = var.region
+      log_group          = aws_cloudwatch_log_group.app.name
       traefik_image      = local.traefik_image
       socket_proxy_image = local.socket_proxy_image
       tls_enabled        = local.tls_enabled

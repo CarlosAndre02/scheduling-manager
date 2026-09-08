@@ -1,4 +1,5 @@
 import { pool } from "./conn";
+import { logger } from "../core/logger";
 
 // A hard ceiling on the response, not only on the query.
 //
@@ -38,8 +39,9 @@ export async function isDatabaseReachable(): Promise<boolean> {
     await Promise.race([pool.query("SELECT 1"), expired]);
     return true;
   } catch (error) {
-    console.error("\n[Readiness] Database probe failed");
-    console.error(error);
+    // warn, not error: an unreachable database is a state this endpoint exists
+    // to report, and it is reported on every poll while it lasts.
+    logger.warn({ err: error }, "database probe failed");
     return false;
   } finally {
     clearTimeout(expiry);

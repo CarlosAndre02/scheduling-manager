@@ -67,6 +67,40 @@ data "aws_iam_policy_document" "instance_permissions" {
     ]
   }
 
+  # Write-only, and to one group. The instance ships its containers' output and
+  # has no reason to read anything back — reading is an operator's task, done
+  # from a console with its own identity.
+  #
+  # CreateLogGroup is deliberately absent: the group is a Terraform resource so
+  # its retention is declared, and an instance that could create groups could
+  # create one without any.
+  statement {
+    sid     = "ShipContainerLogs"
+    effect  = "Allow"
+    actions = ["logs:CreateLogStream", "logs:PutLogEvents"]
+
+    resources = [
+      "${aws_cloudwatch_log_group.app.arn}:*",
+    ]
+  }
+
+  # PutMetricData takes no resource, so the namespace condition is the only
+  # scope available: the agent may publish this project's metrics and nothing
+  # else's. Without it the grant is "write any metric in the account", and a
+  # metric is billed by whoever creates it.
+  statement {
+    sid       = "PublishHostMetrics"
+    effect    = "Allow"
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = [var.project]
+    }
+  }
+
   # The database URL is a SecureString under the AWS managed key, which cannot
   # be named here: alias/aws/ssm does not exist until the account's first
   # SecureString is written, so a data source lookup would fail on a clean

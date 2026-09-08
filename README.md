@@ -133,6 +133,7 @@ Use cases depend on repository _interfaces_, never on Drizzle, so the domain has
 - [docs/api.md](docs/api.md) — HTTP contract, environment variables, migrations, deployment notes
 - [docs/ci-cd.md](docs/ci-cd.md) — the pipeline: what runs on every push, and how a release reaches the instance
 - [docs/rollback.md](docs/rollback.md) — going back: what a rollback undoes, what it cannot, and the schema discipline that keeps it available
+- [docs/observability-and-monitoring.md](docs/observability-and-monitoring.md) — telemetry, monitoring, observability, error management and analytics: what each is and what this system emits
 - [docs/aws-governance.md](docs/aws-governance.md) — AWS identities, account structure, permission sets, cost guardrails, audit trail
 - [docs/aws-stack-implementation.md](docs/aws-stack-implementation.md) — how the infrastructure is split into stacks, and in which order
 - [docs/vpc.md](docs/vpc.md) — VPC, subnets, availability zones, egress options, security groups

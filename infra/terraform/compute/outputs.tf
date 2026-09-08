@@ -27,3 +27,8 @@ output "deploy_command" {
   description = "Installs whatever the image-tag parameter currently says, without waiting for the result. scripts/release.sh is the same call plus the wait and the checks around it."
   value       = "aws ssm send-command --region ${var.region} --document-name ${aws_ssm_document.deploy.name} --targets 'Key=tag:Name,Values=${var.project}-app'"
 }
+
+output "dashboard_url" {
+  description = "The operational view: latency, throughput, errors, credits, disk and the two log queries."
+  value       = "https://${var.region}.console.aws.amazon.com/cloudwatch/home?region=${var.region}#dashboards/dashboard/${aws_cloudwatch_dashboard.app.dashboard_name}"
+}

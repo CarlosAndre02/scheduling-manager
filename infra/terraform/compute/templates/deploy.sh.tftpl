@@ -28,6 +28,15 @@ param() {
     --query Parameter.Value --output text
 }
 
+# For configuration the application runs without. `param` aborts the deploy when
+# a parameter is missing, which is right for the database URL and wrong for
+# anything optional: a tracker nobody has configured yet must not be the reason
+# a release cannot ship.
+optional_param() {
+  aws ssm get-parameter --region "${region}" --name "$1" --with-decryption \
+    --query Parameter.Value --output text 2>/dev/null || true
+}
+
 TAG=$(param "/${project}/image-tag")
 REPLICAS=$(param "/${project}/app-replicas")
 
@@ -45,8 +54,22 @@ umask 077
 # on the host.
 printf 'DATABASE_URL=%s\n' "$(param "/${project}/database-url")" > app.env
 
+SENTRY_DSN=$(optional_param "/${project}/sentry-dsn")
+if [ -n "$SENTRY_DSN" ]; then
+  printf 'SENTRY_DSN=%s\n' "$SENTRY_DSN" >> app.env
+fi
+
+# Not a secret, and here anyway: it belongs with the DSN it is meaningless
+# without, and reading it at deploy time is what makes raising it during an
+# investigation a deploy rather than a rebuild.
+TRACES_RATE=$(optional_param "/${project}/sentry-traces-sample-rate")
+if [ -n "$TRACES_RATE" ]; then
+  printf 'SENTRY_TRACES_SAMPLE_RATE=%s\n' "$TRACES_RATE" >> app.env
+fi
+
 cat > .env <<ENVFILE
 APP_IMAGE=${registry}/${project}:$TAG
+APP_RELEASE=$TAG
 APP_REPLICAS=$REPLICAS
 DATABASE_POOL_MAX=$POOL_MAX
 ENVFILE

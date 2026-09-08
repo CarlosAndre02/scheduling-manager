@@ -86,6 +86,58 @@ variable "image_tag" {
   }
 }
 
+# CloudWatch bills log storage monthly and applies no expiry unless one is
+# declared. Long enough to investigate an incident nobody noticed for a week,
+# short enough that the bill does not grow forever.
+variable "log_retention_days" {
+  description = "How long shipped container logs are kept. Zero would mean forever, which is why it is not an option here."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365], var.log_retention_days)
+    error_message = "Must be one of the retention periods CloudWatch accepts."
+  }
+}
+
+variable "alert_email" {
+  description = "Where alarms are delivered. AWS sends a confirmation link and the subscription is silent until it is clicked."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.alert_email))
+    error_message = "Must be an email address."
+  }
+}
+
+# Thresholds are the whole design of an alarm. Too tight and it fires without a
+# consequence, which teaches people to ignore it; too loose and it reports an
+# incident nobody can still act on. These are starting points to correct once
+# there is a week of real traffic to correct them against.
+variable "error_alarm_count" {
+  description = "Server errors in five minutes that constitute an incident."
+  type        = number
+  default     = 5
+}
+
+variable "latency_alarm_ms" {
+  description = "p95 request duration, in milliseconds, held for two periods."
+  type        = number
+  default     = 1000
+}
+
+variable "traffic_alarm_min_requests" {
+  description = "Requests per five minutes below which silence is treated as an incident. Zero leaves the alarm uncreated."
+  type        = number
+  default     = 0
+}
+
+variable "disk_alarm_percent" {
+  description = "Root volume usage. Released images accumulate, and reclaiming them shortens the rollback window."
+  type        = number
+  default     = 80
+}
+
 variable "app_replicas" {
   description = "Application containers behind the proxy. Two is the floor worth running: Docker marks an unhealthy container but does nothing about it, so with one container a wedged process is an outage until someone notices."
   type        = number
